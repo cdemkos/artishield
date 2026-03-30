@@ -1,0 +1,9 @@
+# Increase rustc stack size to prevent SIGSEGV when compiling arti's deep
+# proc-macro / syn dependency tree. 64 MB is the recommended minimum.
+[env]
+RUST_MIN_STACK = "67108864"
+
+# Limit parallel codegen units on low-RAM machines.
+# Remove or increase if you have ≥ 16 GB RAM.
+[build]
+jobs = 2
