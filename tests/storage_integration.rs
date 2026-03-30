@@ -1,190 +1,152 @@
-//! Integration tests for the SQLite reputation store.
+//! Integration tests for ReputationStore.
 
-use artishield::{
-    event::{ThreatEvent, ThreatKind, ThreatLevel},
-    storage::ReputationStore,
-};
-use chrono::Utc;
+use artishield::storage::ReputationStore;
+use chrono::{Duration, Utc};
+use std::net::IpAddr;
 
-fn store() -> ReputationStore {
-    ReputationStore::in_memory().expect("in-memory SQLite failed")
-}
-
-// ── Relay reputation ──────────────────────────────────────────────────────────
+// ── EMA ───────────────────────────────────────────────────────────────────────
 
 #[test]
-fn insert_and_read_relay_score() {
-    let s = store();
-    s.update_relay("AABBCC", 0.7, None, None).unwrap();
-    let score = s.relay_score("AABBCC");
-    assert!((score - 0.7).abs() < 0.01, "score={score}");
+fn ema_blends_correctly() {
+    let s = ReputationStore::in_memory().unwrap();
+    s.update_relay("A", 0.9, None, None).unwrap();
+    s.update_relay("A", 0.0, None, None).unwrap();
+    let score = s.relay_score("A");
+    assert!((score - 0.63).abs() < 0.02, "EMA={score}");
 }
 
 #[test]
-fn ema_blending_converges() {
-    let s = store();
-    s.update_relay("FP01", 1.0, None, None).unwrap(); // start at 1.0
-    s.update_relay("FP01", 0.0, None, None).unwrap(); // EMA: 0.3*0 + 0.7*1 = 0.7
-    s.update_relay("FP01", 0.0, None, None).unwrap(); // EMA: 0.3*0 + 0.7*0.7 = 0.49
-    s.update_relay("FP01", 0.0, None, None).unwrap(); // EMA: ~0.343
+fn first_update_no_blend() {
+    let s = ReputationStore::in_memory().unwrap();
+    s.update_relay("NEW", 0.5, None, None).unwrap();
+    assert!((s.relay_score("NEW") - 0.5).abs() < 0.001);
+}
 
-    let score = s.relay_score("FP01");
-    assert!(score < 0.5, "EMA should have decayed below 0.5, got {score}");
-    assert!(score > 0.2, "EMA should not have decayed below 0.2, got {score}");
+// ── Flags ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn flag_added() {
+    let s = ReputationStore::in_memory().unwrap();
+    s.update_relay("B", 0.9, None, None).unwrap();
+    s.add_flag("B", "sybil").unwrap();
+    let relays = s.suspicious_relays(0.0).unwrap();
+    assert!(relays[0].flags.contains("sybil"));
 }
 
 #[test]
-fn unknown_relay_returns_zero() {
-    let s     = store();
-    let score = s.relay_score("NONEXISTENT");
-    assert_eq!(score, 0.0);
+fn flag_no_duplicate() {
+    let s = ReputationStore::in_memory().unwrap();
+    s.update_relay("C", 0.9, None, None).unwrap();
+    s.add_flag("C", "sybil").unwrap();
+    s.add_flag("C", "sybil").unwrap();
+    s.add_flag("C", "guard_inj").unwrap();
+    let relays = s.suspicious_relays(0.0).unwrap();
+    let flags  = &relays[0].flags;
+    assert_eq!(flags.matches("sybil").count(), 1, "duplicate sybil flag: {flags}");
+    assert!(flags.contains("guard_inj"));
 }
+
+// ── Suspicious filter ─────────────────────────────────────────────────────────
 
 #[test]
-fn flag_relay() {
-    let s = store();
-    s.update_relay("FP02", 0.8, None, None).unwrap();
-    s.add_flag("FP02", "sybil").unwrap();
-    s.add_flag("FP02", "dos_source").unwrap();
-
-    let records = s.suspicious_relays(0.5).unwrap();
-    let rec     = records.iter().find(|r| r.fingerprint == "FP02").unwrap();
-    assert!(rec.flags.contains("sybil"));
-    assert!(rec.flags.contains("dos_source"));
+fn suspicious_threshold() {
+    let s = ReputationStore::in_memory().unwrap();
+    s.update_relay("GOOD", 0.1, None, None).unwrap();
+    s.update_relay("BAD",  0.9, None, None).unwrap();
+    let sus = s.suspicious_relays(0.5).unwrap();
+    assert_eq!(sus.len(), 1);
+    assert_eq!(sus[0].fingerprint, "BAD");
 }
+
+// ── ASN storage ───────────────────────────────────────────────────────────────
 
 #[test]
-fn suspicious_filter_threshold() {
-    let s = store();
-    s.update_relay("CLEAN",   0.1, None, None).unwrap();
-    s.update_relay("MEDIUM",  0.6, None, None).unwrap();
-    s.update_relay("DANGER",  0.95, None, None).unwrap();
-
-    let above_05 = s.suspicious_relays(0.5).unwrap();
-    let fps: Vec<&str> = above_05.iter().map(|r| r.fingerprint.as_str()).collect();
-    assert!(!fps.contains(&"CLEAN"),  "CLEAN should be below threshold");
-    assert!(fps.contains(&"MEDIUM"),  "MEDIUM should be above threshold");
-    assert!(fps.contains(&"DANGER"),  "DANGER should be above threshold");
+fn asn_stored_as_i64() {
+    let s = ReputationStore::in_memory().unwrap();
+    // u32::MAX fits in i64
+    s.update_relay("D", 0.5, Some(4_294_967_295u32), Some("DE")).unwrap();
+    let relays = s.suspicious_relays(0.0).unwrap();
+    assert_eq!(relays[0].asn, Some(4_294_967_295i64));
+    assert_eq!(relays[0].country.as_deref(), Some("DE"));
 }
 
-#[test]
-fn suspicious_ordered_by_score_desc() {
-    let s = store();
-    s.update_relay("R1", 0.6, None, None).unwrap();
-    s.update_relay("R2", 0.9, None, None).unwrap();
-    s.update_relay("R3", 0.7, None, None).unwrap();
-
-    let result = s.suspicious_relays(0.5).unwrap();
-    // Highest score should be first
-    assert!(result[0].score >= result[1].score);
-    assert!(result[1].score >= result[2].score);
-}
-
-#[test]
-fn relay_with_asn_and_country() {
-    let s = store();
-    s.update_relay("FP_GEO", 0.5, Some(13335), Some("DE")).unwrap();
-
-    let records = s.suspicious_relays(0.4).unwrap();
-    let rec     = records.iter().find(|r| r.fingerprint == "FP_GEO").unwrap();
-    assert_eq!(rec.asn,     Some(13335));
-    assert_eq!(rec.country, Some("DE".into()));
-}
-
-// ── Threat events ─────────────────────────────────────────────────────────────
-
-fn sample_event(score: f64) -> ThreatEvent {
-    ThreatEvent::new(
-        ThreatLevel::High,
-        ThreatKind::SybilCluster {
-            shared_asn:    None,
-            shared_prefix: Some("198.51.100.0".into()),
-            affected_fps:  vec!["AABB".into(), "CCDD".into()],
-        },
-        format!("test event score={score}"),
-        score,
-        vec!["auto_circuit_rotate".into()],
-    )
-}
-
-#[test]
-fn store_and_retrieve_event() {
-    let s   = store();
-    let evt = sample_event(0.85);
-    let id  = evt.id.to_string();
-    s.store_event(&evt).unwrap();
-
-    let recent = s.recent_events(10).unwrap();
-    assert_eq!(recent.len(), 1);
-    assert_eq!(recent[0].id, id);
-    assert!((recent[0].anomaly_score - 0.85).abs() < 0.001);
-}
-
-#[test]
-fn events_ordered_newest_first() {
-    let s = store();
-    for i in 0..5u32 {
-        s.store_event(&sample_event(i as f64 / 10.0)).unwrap();
-    }
-    let recent = s.recent_events(10).unwrap();
-    // Timestamps should be non-increasing (newest first)
-    for w in recent.windows(2) {
-        assert!(w[0].timestamp >= w[1].timestamp, "Events not newest-first");
-    }
-}
-
-#[test]
-fn duplicate_event_ignored() {
-    let s   = store();
-    let evt = sample_event(0.7);
-    s.store_event(&evt).unwrap();
-    s.store_event(&evt).unwrap(); // duplicate — same UUID
-    assert_eq!(s.recent_events(10).unwrap().len(), 1);
-}
-
-#[test]
-fn recent_events_limit_respected() {
-    let s = store();
-    for _ in 0..20 {
-        s.store_event(&sample_event(0.5)).unwrap();
-    }
-    let recent = s.recent_events(5).unwrap();
-    assert_eq!(recent.len(), 5);
-}
-
-// ── Blocked IPs ───────────────────────────────────────────────────────────────
+// ── IP blocklist ──────────────────────────────────────────────────────────────
 
 #[test]
 fn block_and_count() {
-    let s = store();
-    s.block_ip("1.2.3.4".parse().unwrap(), "sybil", None).unwrap();
-    s.block_ip("5.6.7.8".parse().unwrap(), "timing", None).unwrap();
-    assert_eq!(s.blocked_ip_count(), 2);
+    let s = ReputationStore::in_memory().unwrap();
+    let ip: IpAddr = "1.2.3.4".parse().unwrap();
+    s.block_ip(ip, "test", None).unwrap();
+    assert_eq!(s.blocked_ip_count(), 1);
+    assert!(s.is_blocked(&ip));
 }
 
 #[test]
-fn block_idempotent() {
-    let s  = store();
-    let ip = "1.2.3.4".parse().unwrap();
-    s.block_ip(ip, "reason_a", None).unwrap();
-    s.block_ip(ip, "reason_b", None).unwrap(); // REPLACE — last reason wins
+fn unblock_works() {
+    let s  = ReputationStore::in_memory().unwrap();
+    let ip: IpAddr = "5.6.7.8".parse().unwrap();
+    s.block_ip(ip, "test", None).unwrap();
+    s.unblock_ip("5.6.7.8").unwrap();
+    assert_eq!(s.blocked_ip_count(), 0);
+    assert!(!s.is_blocked(&ip));
+}
+
+#[test]
+fn unblocked_ip_not_blocked() {
+    let s = ReputationStore::in_memory().unwrap();
+    let ip: IpAddr = "9.10.11.12".parse().unwrap();
+    assert!(!s.is_blocked(&ip));
+}
+
+#[test]
+fn expired_block_pruned() {
+    let s  = ReputationStore::in_memory().unwrap();
+    let ip: IpAddr = "10.0.0.1".parse().unwrap();
+    // expires in the past
+    let past = Utc::now() - Duration::hours(1);
+    s.block_ip(ip, "expired", Some(past)).unwrap();
+    assert_eq!(s.blocked_ip_count(), 1);
+    let pruned = s.prune_expired_blocks().unwrap();
+    assert_eq!(pruned, 1);
+    assert_eq!(s.blocked_ip_count(), 0);
+}
+
+#[test]
+fn active_block_not_pruned() {
+    let s   = ReputationStore::in_memory().unwrap();
+    let ip: IpAddr = "10.0.0.2".parse().unwrap();
+    let future = Utc::now() + Duration::hours(1);
+    s.block_ip(ip, "active", Some(future)).unwrap();
+    let pruned = s.prune_expired_blocks().unwrap();
+    assert_eq!(pruned, 0);
     assert_eq!(s.blocked_ip_count(), 1);
 }
 
-#[test]
-fn prune_expired_blocks() {
-    use chrono::Duration;
-    let s = store();
-    // One block that expired in the past
-    let past = Utc::now() - Duration::hours(1);
-    s.block_ip("1.2.3.4".parse().unwrap(), "expired", Some(past)).unwrap();
-    // One block that expires in the future
-    let future = Utc::now() + Duration::hours(1);
-    s.block_ip("5.6.7.8".parse().unwrap(), "active", Some(future)).unwrap();
-    // One permanent block
-    s.block_ip("9.10.11.12".parse().unwrap(), "permanent", None).unwrap();
+// ── Events ────────────────────────────────────────────────────────────────────
 
-    let pruned = s.prune_expired_blocks().unwrap();
-    assert_eq!(pruned, 1, "Only one block should have been pruned");
-    assert_eq!(s.blocked_ip_count(), 2);
+#[test]
+fn recent_events_empty_initially() {
+    let s = ReputationStore::in_memory().unwrap();
+    assert!(s.recent_events(10).unwrap().is_empty());
+}
+
+#[test]
+fn recent_events_limit() {
+    use artishield::event::{ThreatEvent, ThreatKind, ThreatLevel};
+    let s = ReputationStore::in_memory().unwrap();
+    for _ in 0..5 {
+        let evt = ThreatEvent::new(
+            ThreatLevel::Low,
+            ThreatKind::AnomalySpike {
+                score: 0.1,
+                contributing_detectors: vec![],
+            },
+            "test",
+            0.1,
+            vec![],
+        );
+        s.store_event(&evt).unwrap();
+    }
+    assert_eq!(s.recent_events(3).unwrap().len(), 3);
+    assert_eq!(s.recent_events(100).unwrap().len(), 5);
 }

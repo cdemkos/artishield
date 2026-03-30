@@ -1,18 +1,30 @@
 //! Persistent SQLite reputation store.
+//!
+//! ## Schema
+//!
+//! - `relay_reputation` — per-relay EMA score, ASN, country, flags
+//! - `threat_events`    — last N ThreatEvents (pruned to 10 000)
+//! - `blocked_ips`      — IP blocklist with optional TTL
 
 use crate::event::ThreatEvent;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use std::{net::IpAddr, path::Path, sync::Mutex};
 use tracing::{debug, info};
 
-pub struct ReputationStore { conn: Mutex<Connection> }
+/// Maximum threat events kept in the database.
+const MAX_STORED_EVENTS: usize = 10_000;
+
+pub struct ReputationStore {
+    conn: Mutex<Connection>,
+}
 
 impl ReputationStore {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+        // WAL mode: concurrent reads don't block writes
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         let s = Self { conn: Mutex::new(conn) };
         s.migrate()?;
         info!(?path, "ReputationStore opened");
@@ -29,45 +41,114 @@ impl ReputationStore {
     fn migrate(&self) -> Result<()> {
         self.conn.lock().unwrap().execute_batch(r#"
             CREATE TABLE IF NOT EXISTS relay_reputation (
-                fingerprint TEXT PRIMARY KEY, score REAL NOT NULL DEFAULT 0.0,
-                seen_circuits INTEGER NOT NULL DEFAULT 0, last_seen TEXT NOT NULL,
-                flags TEXT NOT NULL DEFAULT '', asn INTEGER, country TEXT);
+                fingerprint   TEXT PRIMARY KEY,
+                score         REAL    NOT NULL DEFAULT 0.0,
+                seen_circuits INTEGER NOT NULL DEFAULT 0,
+                last_seen     TEXT    NOT NULL,
+                flags         TEXT    NOT NULL DEFAULT '',
+                asn           INTEGER,
+                country       TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS threat_events (
-                id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, level TEXT NOT NULL,
-                kind TEXT NOT NULL, message TEXT NOT NULL, anomaly_score REAL NOT NULL);
-            CREATE INDEX IF NOT EXISTS idx_events_ts ON threat_events(timestamp DESC);
+                id            TEXT PRIMARY KEY,
+                timestamp     TEXT NOT NULL,
+                level         TEXT NOT NULL,
+                kind          TEXT NOT NULL,
+                message       TEXT NOT NULL,
+                anomaly_score REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_events_ts
+                ON threat_events(timestamp DESC);
+
             CREATE TABLE IF NOT EXISTS blocked_ips (
-                ip TEXT PRIMARY KEY, blocked_at TEXT NOT NULL,
-                reason TEXT NOT NULL, expires_at TEXT);
+                ip         TEXT PRIMARY KEY,
+                blocked_at TEXT NOT NULL,
+                reason     TEXT NOT NULL,
+                expires_at TEXT
+            );
         "#)?;
         debug!("Schema ready");
         Ok(())
     }
 
-    pub fn update_relay(&self, fp: &str, new_score: f64, asn: Option<u32>, country: Option<&str>) -> Result<()> {
+    // ── Relay reputation ───────────────────────────────────────────────────────
+
+    /// Update relay score using EMA: new = 0.3 * fresh + 0.7 * old.
+    /// `asn` is stored as i64 (SQLite INTEGER) — the u32 fits safely.
+    pub fn update_relay(
+        &self,
+        fp:      &str,
+        new_score: f64,
+        asn:     Option<u32>,
+        country: Option<&str>,
+    ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        let old: Option<f64> = conn.query_row(
-            "SELECT score FROM relay_reputation WHERE fingerprint=?1", params![fp], |r| r.get(0)).ok();
-        let blended = match old { Some(o) => 0.3*new_score + 0.7*o, None => new_score };
+        let old: Option<f64> = conn
+            .query_row(
+                "SELECT score FROM relay_reputation WHERE fingerprint=?1",
+                params![fp],
+                |r| r.get(0),
+            )
+            .ok();
+        let blended = match old {
+            Some(o) => 0.3 * new_score + 0.7 * o,
+            None    => new_score,
+        };
+        // asn: cast u32 → i64 (SQLite has no u32 type)
+        let asn_i64 = asn.map(|a| a as i64);
         conn.execute(
             r#"INSERT INTO relay_reputation(fingerprint,score,seen_circuits,last_seen,asn,country)
-               VALUES(?1,?2,1,?3,?4,?5) ON CONFLICT(fingerprint) DO UPDATE SET
-               score=excluded.score, seen_circuits=seen_circuits+1, last_seen=excluded.last_seen,
-               asn=COALESCE(excluded.asn,asn), country=COALESCE(excluded.country,country)"#,
-            params![fp, blended, Utc::now().to_rfc3339(), asn, country])?;
+               VALUES(?1,?2,1,?3,?4,?5)
+               ON CONFLICT(fingerprint) DO UPDATE SET
+                   score         = excluded.score,
+                   seen_circuits = seen_circuits + 1,
+                   last_seen     = excluded.last_seen,
+                   asn           = COALESCE(excluded.asn, asn),
+                   country       = COALESCE(excluded.country, country)"#,
+            params![fp, blended, Utc::now().to_rfc3339(), asn_i64, country],
+        )?;
         Ok(())
     }
 
+    /// Add a flag to a relay, avoiding duplicates.
     pub fn add_flag(&self, fp: &str, flag: &str) -> Result<()> {
-        self.conn.lock().unwrap().execute(
-            "UPDATE relay_reputation SET flags=CASE WHEN flags='' THEN ?2 ELSE flags||','||?2 END WHERE fingerprint=?1",
-            params![fp, flag])?;
+        let conn  = self.conn.lock().unwrap();
+        // Read current flags, add only if not already present
+        let current: Option<String> = conn
+            .query_row(
+                "SELECT flags FROM relay_reputation WHERE fingerprint=?1",
+                params![fp],
+                |r| r.get(0),
+            )
+            .ok();
+
+        if let Some(flags) = current {
+            let already = flags.split(',').any(|f| f.trim() == flag);
+            if !already {
+                let new_flags = if flags.is_empty() {
+                    flag.to_string()
+                } else {
+                    format!("{flags},{flag}")
+                };
+                conn.execute(
+                    "UPDATE relay_reputation SET flags=?2 WHERE fingerprint=?1",
+                    params![fp, new_flags],
+                )?;
+            }
+        }
         Ok(())
     }
 
     pub fn relay_score(&self, fp: &str) -> f64 {
-        self.conn.lock().unwrap()
-            .query_row("SELECT score FROM relay_reputation WHERE fingerprint=?1", params![fp], |r| r.get(0))
+        self.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT score FROM relay_reputation WHERE fingerprint=?1",
+                params![fp],
+                |r| r.get(0),
+            )
             .unwrap_or(0.0)
     }
 
@@ -75,20 +156,47 @@ impl ReputationStore {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT fingerprint,score,seen_circuits,last_seen,flags,asn,country \
-             FROM relay_reputation WHERE score>=?1 ORDER BY score DESC")?;
-        // collect() before conn is dropped — fixes E0597
-        let result: Result<Vec<_>, _> = stmt.query_map(params![threshold], |r| Ok(RelayRecord {
-            fingerprint: r.get(0)?, score: r.get(1)?, seen_circuits: r.get(2)?,
-            last_seen: r.get(3)?, flags: r.get(4)?, asn: r.get(5)?, country: r.get(6)?,
-        }))?.collect();
-        Ok(result?.into_iter().collect())
+             FROM relay_reputation WHERE score>=?1 ORDER BY score DESC",
+        )?;
+        // Collect before conn is dropped (fixes E0597)
+        let result: Result<Vec<_>, _> = stmt
+            .query_map(params![threshold], |r| {
+                Ok(RelayRecord {
+                    fingerprint:   r.get(0)?,
+                    score:         r.get(1)?,
+                    seen_circuits: r.get(2)?,
+                    last_seen:     r.get(3)?,
+                    flags:         r.get(4)?,
+                    asn:           r.get(5)?,
+                    country:       r.get(6)?,
+                })
+            })?
+            .collect();
+        Ok(result?)
     }
 
+    // ── Events ─────────────────────────────────────────────────────────────────
+
     pub fn store_event(&self, evt: &ThreatEvent) -> Result<()> {
-        self.conn.lock().unwrap().execute(
-            "INSERT OR IGNORE INTO threat_events(id,timestamp,level,kind,message,anomaly_score) VALUES(?1,?2,?3,?4,?5,?6)",
-            params![evt.id.to_string(), evt.timestamp.to_rfc3339(), evt.level.to_string(),
-                    serde_json::to_string(&evt.kind).unwrap_or_default(), evt.message, evt.anomaly_score])?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO threat_events(id,timestamp,level,kind,message,anomaly_score) \
+             VALUES(?1,?2,?3,?4,?5,?6)",
+            params![
+                evt.id.to_string(),
+                evt.timestamp.to_rfc3339(),
+                evt.level.to_string(),
+                serde_json::to_string(&evt.kind).unwrap_or_default(),
+                evt.message,
+                evt.anomaly_score
+            ],
+        )?;
+        // Prune to keep DB size bounded
+        conn.execute(
+            "DELETE FROM threat_events WHERE id NOT IN \
+             (SELECT id FROM threat_events ORDER BY timestamp DESC LIMIT ?1)",
+            params![MAX_STORED_EVENTS as i64],
+        )?;
         Ok(())
     }
 
@@ -96,65 +204,148 @@ impl ReputationStore {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id,timestamp,level,message,anomaly_score \
-             FROM threat_events ORDER BY timestamp DESC LIMIT ?1")?;
-        // collect() before conn is dropped — fixes E0597
-        let result: Result<Vec<_>, _> = stmt.query_map(params![limit as i64], |r| Ok(StoredEvent {
-            id: r.get(0)?, timestamp: r.get(1)?, level: r.get(2)?,
-            message: r.get(3)?, anomaly_score: r.get(4)?,
-        }))?.collect();
-        Ok(result?.into_iter().collect())
+             FROM threat_events ORDER BY timestamp DESC LIMIT ?1",
+        )?;
+        let result: Result<Vec<_>, _> = stmt
+            .query_map(params![limit as i64], |r| {
+                Ok(StoredEvent {
+                    id:            r.get(0)?,
+                    timestamp:     r.get(1)?,
+                    level:         r.get(2)?,
+                    message:       r.get(3)?,
+                    anomaly_score: r.get(4)?,
+                })
+            })?
+            .collect();
+        Ok(result?)
     }
 
-    pub fn block_ip(&self, ip: IpAddr, reason: &str, expires: Option<DateTime<Utc>>) -> Result<()> {
+    // ── IP blocklist ───────────────────────────────────────────────────────────
+
+    pub fn block_ip(
+        &self,
+        ip:      IpAddr,
+        reason:  &str,
+        expires: Option<DateTime<Utc>>,
+    ) -> Result<()> {
         self.conn.lock().unwrap().execute(
-            "INSERT OR REPLACE INTO blocked_ips(ip,blocked_at,reason,expires_at) VALUES(?1,?2,?3,?4)",
-            params![ip.to_string(), Utc::now().to_rfc3339(), reason, expires.map(|e| e.to_rfc3339())])?;
+            "INSERT OR REPLACE INTO blocked_ips(ip,blocked_at,reason,expires_at) \
+             VALUES(?1,?2,?3,?4)",
+            params![
+                ip.to_string(),
+                Utc::now().to_rfc3339(),
+                reason,
+                expires.map(|e| e.to_rfc3339())
+            ],
+        )?;
         info!(%ip, reason, "IP blocked");
         Ok(())
     }
 
+    pub fn unblock_ip(&self, ip: &str) -> Result<()> {
+        let n = self.conn.lock().unwrap().execute(
+            "DELETE FROM blocked_ips WHERE ip=?1",
+            params![ip],
+        )?;
+        if n > 0 {
+            info!(ip, "IP unblocked");
+        }
+        Ok(())
+    }
+
+    pub fn is_blocked(&self, ip: &IpAddr) -> bool {
+        self.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM blocked_ips WHERE ip=?1 \
+                 AND (expires_at IS NULL OR expires_at > ?2)",
+                params![ip.to_string(), Utc::now().to_rfc3339()],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false)
+    }
+
     pub fn prune_expired_blocks(&self) -> Result<usize> {
         Ok(self.conn.lock().unwrap().execute(
-            "DELETE FROM blocked_ips WHERE expires_at IS NOT NULL AND expires_at<?1",
-            params![Utc::now().to_rfc3339()])?)
+            "DELETE FROM blocked_ips WHERE expires_at IS NOT NULL AND expires_at < ?1",
+            params![Utc::now().to_rfc3339()],
+        )?)
     }
 
     pub fn blocked_ip_count(&self) -> usize {
-        self.conn.lock().unwrap()
+        self.conn
+            .lock()
+            .unwrap()
             .query_row("SELECT COUNT(*) FROM blocked_ips", [], |r| r.get(0))
             .unwrap_or(0)
     }
 }
 
+// ── Record types ──────────────────────────────────────────────────────────────
+
 #[derive(Debug, Clone)]
 pub struct RelayRecord {
-    pub fingerprint: String, pub score: f64, pub seen_circuits: i64,
-    pub last_seen: String, pub flags: String, pub asn: Option<i64>, pub country: Option<String>,
+    pub fingerprint:   String,
+    pub score:         f64,
+    pub seen_circuits: i64,
+    pub last_seen:     String,
+    pub flags:         String,
+    pub asn:           Option<i64>,
+    pub country:       Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct StoredEvent {
-    pub id: String, pub timestamp: String, pub level: String,
-    pub message: String, pub anomaly_score: f64,
+    pub id:            String,
+    pub timestamp:     String,
+    pub level:         String,
+    pub message:       String,
+    pub anomaly_score: f64,
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn ema() {
+    fn ema_blending() {
         let s = ReputationStore::in_memory().unwrap();
         s.update_relay("A", 0.9, None, None).unwrap();
         s.update_relay("A", 0.0, None, None).unwrap();
         let score = s.relay_score("A");
+        // second call: 0.3*0.0 + 0.7*0.9 = 0.63
         assert!((score - 0.63).abs() < 0.02, "EMA={score}");
     }
+
     #[test]
-    fn block_count() {
+    fn flag_deduplication() {
         let s = ReputationStore::in_memory().unwrap();
-        s.block_ip("1.2.3.4".parse().unwrap(), "t", None).unwrap();
-        assert_eq!(s.blocked_ip_count(), 1);
+        s.update_relay("B", 0.5, None, None).unwrap();
+        s.add_flag("B", "sybil").unwrap();
+        s.add_flag("B", "sybil").unwrap(); // duplicate
+        s.add_flag("B", "guard_inj").unwrap();
+        let relays = s.suspicious_relays(0.0).unwrap();
+        let flags = &relays[0].flags;
+        // Should be "sybil,guard_inj" not "sybil,sybil,guard_inj"
+        assert_eq!(flags.matches("sybil").count(), 1, "flags={flags}");
     }
+
+    #[test]
+    fn block_and_unblock() {
+        let s = ReputationStore::in_memory().unwrap();
+        let ip: IpAddr = "1.2.3.4".parse().unwrap();
+        s.block_ip(ip, "test", None).unwrap();
+        assert_eq!(s.blocked_ip_count(), 1);
+        assert!(s.is_blocked(&ip));
+        s.unblock_ip("1.2.3.4").unwrap();
+        assert_eq!(s.blocked_ip_count(), 0);
+        assert!(!s.is_blocked(&ip));
+    }
+
     #[test]
     fn suspicious_filter() {
         let s = ReputationStore::in_memory().unwrap();
@@ -163,5 +354,21 @@ mod tests {
         let sus = s.suspicious_relays(0.5).unwrap();
         assert_eq!(sus.len(), 1);
         assert_eq!(sus[0].fingerprint, "BAD");
+    }
+
+    #[test]
+    fn asn_stored_and_retrieved() {
+        let s = ReputationStore::in_memory().unwrap();
+        s.update_relay("C", 0.5, Some(12345), Some("DE")).unwrap();
+        let relays = s.suspicious_relays(0.0).unwrap();
+        assert_eq!(relays[0].asn, Some(12345));
+        assert_eq!(relays[0].country.as_deref(), Some("DE"));
+    }
+
+    #[test]
+    fn events_pruning() {
+        let s   = ReputationStore::in_memory().unwrap();
+        let evts = s.recent_events(100).unwrap();
+        assert!(evts.is_empty());
     }
 }
