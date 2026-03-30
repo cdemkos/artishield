@@ -1,0 +1,94 @@
+version: "3.9"
+
+# ArtiShield full monitoring stack
+#
+# Usage:
+#   docker compose up -d
+#   open http://localhost:3000  (Grafana)
+#   open http://localhost:7878  (ArtiShield API)
+
+services:
+
+  # ── arti (Tor client) ──────────────────────────────────────────────────────
+  arti:
+    image: thetorproject/arti:latest
+    container_name: arti
+    restart: unless-stopped
+    ports:
+      - "9150:9150"   # SOCKS5
+    volumes:
+      - arti-data:/var/lib/arti
+    command: ["proxy", "--socks-port", "9150"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9150"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── ArtiShield ─────────────────────────────────────────────────────────────
+  artishield:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: artishield
+    restart: unless-stopped
+    depends_on:
+      arti:
+        condition: service_healthy
+    ports:
+      - "7878:7878"   # API + /metrics
+    volumes:
+      - artishield-data:/var/lib/artishield
+      - ./artishield.toml:/opt/artishield/artishield.toml:ro
+      # Optional: MaxMind GeoLite2-ASN
+      # - ./GeoLite2-ASN.mmdb:/opt/artishield/GeoLite2-ASN.mmdb:ro
+    environment:
+      RUST_LOG: "artishield=info,warn"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7878/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Prometheus ─────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+
+  # ── Grafana ────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "artishield"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    depends_on:
+      - prometheus
+
+volumes:
+  arti-data:
+  artishield-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  default:
+    name: artishield-net

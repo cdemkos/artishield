@@ -1,0 +1,54 @@
+# artishield.toml — example configuration
+# Copy this file, adjust paths, then run: artishield --config artishield.toml
+
+# arti's SOCKS5 proxy address.
+# The TimingDetector probes through this port; it must be reachable.
+# Default arti value: 127.0.0.1:9150
+socks_addr = "127.0.0.1:9150"
+
+# ArtiShield's own REST + WebSocket dashboard.
+api_addr = "0.0.0.0:7878"
+
+# SQLite database for relay reputation and event history.
+db_path = "artishield.db"
+
+# Log level (RUST_LOG syntax). Override with env var RUST_LOG.
+log_level = "artishield=debug,warn"
+
+# Optional: MaxMind GeoLite2-ASN database.
+# Without this file, ASN-based Sybil clustering is disabled.
+# Download from: https://dev.maxmind.com/geoip/geolite2-free-geolocation-data
+# geoip_db = "/etc/artishield/GeoLite2-ASN.mmdb"
+
+[detectors]
+# Sybil: alert if two circuit hops share the same /24 subnet.
+sybil_subnet_check = true
+
+# Sybil: max hops from the same ASN before alerting.
+sybil_asn_max_hops = 1
+
+# Timing: Pearson |r| threshold for guard↔exit RTT correlation.
+# Range [0, 1]; lower = more sensitive.
+timing_correlation_threshold = 0.6
+
+# Timing: minimum probe window (seconds) before computing correlation.
+timing_window_secs = 30
+
+# Guard: max guard-flag changes per consensus before alerting.
+guard_rotation_max = 5
+
+# Global anomaly score that triggers all configured mitigations.
+alert_threshold = 0.70
+
+[mitigations]
+# Pin the entry guard — log an alert if an unexpected rotation is detected.
+# Note: arti's guard manager already pins guards by default for weeks.
+# This flag enables additional ArtiShield-level alerting.
+guard_pin = true
+
+# Automatically rotate the circuit via TorClient::isolated_client()
+# when the anomaly score exceeds alert_threshold.
+auto_circuit_rotate = false
+
+# Block suspected Sybil / scanner IPs from the persistent blocklist.
+entry_ip_filter = false

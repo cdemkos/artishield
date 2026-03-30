@@ -1,0 +1,62 @@
+# /etc/systemd/system/artishield.service
+#
+# Install:
+#   sudo cp deploy/artishield.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now artishield
+#
+# Requires arti to be running: sudo systemctl start arti
+
+[Unit]
+Description=ArtiShield — Tor/arti threat monitor
+Documentation=https://github.com/your-org/artishield
+After=network-online.target arti.service
+Wants=network-online.target
+Requires=arti.service
+
+[Service]
+Type=simple
+User=artishield
+Group=artishield
+WorkingDirectory=/opt/artishield
+
+ExecStart=/usr/local/bin/artishield --config /etc/artishield/artishield.toml
+Restart=on-failure
+RestartSec=5s
+
+# State directory for SQLite DB
+StateDirectory=artishield
+StateDirectoryMode=0750
+
+# Configuration directory
+ConfigurationDirectory=artishield
+
+# Hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/artishield
+
+# Allow reading the MaxMind DB
+ReadOnlyPaths=/opt/artishield
+
+# Network: need to reach arti's SOCKS port
+# RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=artishield
+
+# Environment — override config values without changing the file
+Environment="RUST_LOG=artishield=info,warn"
+# EnvironmentFile=/etc/artishield/artishield.env
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
