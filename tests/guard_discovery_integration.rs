@@ -2,7 +2,6 @@
 
 use artishield::{ShieldConfig, event::ThreatKind};
 use artishield::detectors::guard_discovery::{GuardDiscoveryDetector, GuardSnapshot};
-use std::collections::HashMap;
 use tokio::sync::broadcast;
 
 fn det() -> GuardDiscoveryDetector {

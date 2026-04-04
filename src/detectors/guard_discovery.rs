@@ -13,7 +13,9 @@ use std::{
     collections::{HashMap, HashSet},
     net::IpAddr,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
+#[cfg(feature = "arti-hooks")]
+use tracing::info;
 
 fn prefix24(ip: IpAddr) -> Option<String> {
     match ip {
@@ -33,6 +35,7 @@ impl GuardSnapshot {
     }
 }
 
+#[cfg_attr(not(feature = "arti-hooks"), allow(dead_code))]
 pub struct GuardDiscoveryDetector {
     config:   ShieldConfig,
     tx:       EventTx,

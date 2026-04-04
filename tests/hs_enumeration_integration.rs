@@ -5,7 +5,6 @@ use artishield::{
     detectors::hs_enumeration::{HsEnumDetector, HsDirSnapshot},
     event::ThreatKind,
 };
-use std::collections::HashMap;
 use tokio::sync::broadcast;
 
 fn det() -> HsEnumDetector {

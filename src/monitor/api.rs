@@ -13,7 +13,7 @@
 //! | GET    | /ws                     | WebSocket live event stream   |
 
 use crate::{
-    event::{MetricsSnapshot, ThreatEvent},
+    event::ThreatEvent,
     storage::ReputationStore,
 };
 use axum::{

@@ -9,19 +9,24 @@ use crate::{
     config::ShieldConfig,
     detectors::{
         dos::DosDetector,
-        guard_discovery::GuardDiscoveryDetector,
-        hs_enumeration::HsEnumDetector,
-        sybil::SybilDetector,
         timing::TimingDetector,
         EventTx,
     },
     event::{MetricsSnapshot, ThreatEvent, ThreatKind},
     storage::ReputationStore,
 };
+#[cfg(feature = "arti-hooks")]
+use crate::detectors::{
+    guard_discovery::GuardDiscoveryDetector,
+    hs_enumeration::HsEnumDetector,
+    sybil::SybilDetector,
+};
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
-use tracing::{info, warn};
+use tracing::info;
+#[cfg(feature = "arti-hooks")]
+use tracing::warn;
 
 // ── Shared state ──────────────────────────────────────────────────────────────
 
@@ -150,7 +155,9 @@ impl ArtiShield {
                 loop {
                     match rx.recv().await {
                         Ok(evt) => {
-                            let _ = store3.store_event(&evt);
+                            if let Err(e) = store3.store_event(&evt) {
+                                tracing::warn!("Failed to persist event: {e}");
+                            }
                             update_reputation(&store3, &evt);
 
                             let mut s = shared3.write().await;
@@ -212,14 +219,22 @@ fn update_reputation(store: &ReputationStore, evt: &ThreatEvent) {
     match &evt.kind {
         ThreatKind::SybilCluster { affected_fps, shared_asn, .. } => {
             for fp in affected_fps {
-                let _ = store.update_relay(fp, evt.anomaly_score, *shared_asn, None);
-                let _ = store.add_flag(fp, "sybil");
+                if let Err(e) = store.update_relay(fp, evt.anomaly_score, *shared_asn, None) {
+                    tracing::warn!(fp, "Failed to update relay reputation: {e}");
+                }
+                if let Err(e) = store.add_flag(fp, "sybil") {
+                    tracing::warn!(fp, "Failed to add sybil flag: {e}");
+                }
             }
         }
         ThreatKind::GuardDiscovery { suspicious_fingerprints, .. } => {
             for fp in suspicious_fingerprints {
-                let _ = store.update_relay(fp, evt.anomaly_score * 0.5, None, None);
-                let _ = store.add_flag(fp, "guard_inj");
+                if let Err(e) = store.update_relay(fp, evt.anomaly_score * 0.5, None, None) {
+                    tracing::warn!(fp, "Failed to update relay reputation: {e}");
+                }
+                if let Err(e) = store.add_flag(fp, "guard_discovery") {
+                    tracing::warn!(fp, "Failed to add guard_discovery flag: {e}");
+                }
             }
         }
         _ => {}
