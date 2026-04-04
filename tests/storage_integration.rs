@@ -105,7 +105,9 @@ fn expired_block_pruned() {
     // expires in the past
     let past = Utc::now() - Duration::hours(1);
     s.block_ip(ip, "expired", Some(past)).unwrap();
-    assert_eq!(s.blocked_ip_count(), 1);
+    // blocked_ip_count must NOT include expired entries — they are not actually blocking
+    assert_eq!(s.blocked_ip_count(), 0, "expired IP must not appear in blocked count");
+    assert!(!s.is_blocked(&ip), "is_blocked must be false for expired entry");
     let pruned = s.prune_expired_blocks().unwrap();
     assert_eq!(pruned, 1);
     assert_eq!(s.blocked_ip_count(), 0);

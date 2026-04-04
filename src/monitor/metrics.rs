@@ -32,9 +32,11 @@ pub async fn render(shared: &Arc<RwLock<SharedState>>, store: &Arc<ReputationSto
            "Threat events in the last 60 s",
            &[("", state.metrics.events_last_minute as f64)]);
 
-    // ── artishield_events_total (by level) ────────────────────────────────────
-    out.push_str("# HELP artishield_events_total Total threat events since start, by level\n");
-    out.push_str("# TYPE artishield_events_total counter\n");
+    // ── artishield_events_recent (by level) ──────────────────────────────────
+    // Gauge, not counter: values come from a 200-event rolling buffer and can
+    // decrease as old entries roll off. A Prometheus counter must never decrease.
+    out.push_str("# HELP artishield_events_recent Threat events in recent buffer, by level\n");
+    out.push_str("# TYPE artishield_events_recent gauge\n");
     for level in [
         ThreatLevel::Info,
         ThreatLevel::Low,
@@ -44,13 +46,14 @@ pub async fn render(shared: &Arc<RwLock<SharedState>>, store: &Arc<ReputationSto
     ] {
         let count = state.recent_events.iter().filter(|e| e.level == level).count();
         out.push_str(&format!(
-            "artishield_events_total{{level=\"{level}\"}} {count}\n"
+            "artishield_events_recent{{level=\"{level}\"}} {count}\n"
         ));
     }
 
-    // ── artishield_detector_events_total (by kind) ────────────────────────────
-    out.push_str("# HELP artishield_detector_events_total Events per detector\n");
-    out.push_str("# TYPE artishield_detector_events_total counter\n");
+    // ── artishield_detector_events_recent (by kind) ───────────────────────────
+    // Same reasoning: gauge because this is a sliding window, not a true total.
+    out.push_str("# HELP artishield_detector_events_recent Events per detector in recent buffer\n");
+    out.push_str("# TYPE artishield_detector_events_recent gauge\n");
     for kind in [
         "sybil_cluster",
         "timing_correlation",
@@ -63,7 +66,7 @@ pub async fn render(shared: &Arc<RwLock<SharedState>>, store: &Arc<ReputationSto
             .filter(|e| kind_label(&e.kind) == kind)
             .count();
         out.push_str(&format!(
-            "artishield_detector_events_total{{detector=\"{kind}\"}} {count}\n"
+            "artishield_detector_events_recent{{detector=\"{kind}\"}} {count}\n"
         ));
     }
 
@@ -151,7 +154,12 @@ mod tests {
         let output = render(&shared, &store).await;
 
         for level in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] {
-            assert!(output.contains(&format!("level=\"{level}\"")), "missing {level}");
+            assert!(output.contains(&format!("level=\"{level}\"")), "missing level {level}");
         }
+        // Verify correct Prometheus type: gauge (not counter) since buffer can shrink
+        assert!(output.contains("# TYPE artishield_events_recent gauge"),
+                "events_recent must be gauge, not counter");
+        assert!(output.contains("# TYPE artishield_detector_events_recent gauge"),
+                "detector_events_recent must be gauge, not counter");
     }
 }
