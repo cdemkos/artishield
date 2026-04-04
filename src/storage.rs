@@ -112,7 +112,16 @@ impl ReputationStore {
     }
 
     /// Add a flag to a relay, avoiding duplicates.
+    ///
+    /// Returns an error if `flag` is empty, contains commas, or contains
+    /// whitespace — all of which would corrupt the comma-separated flag store.
     pub fn add_flag(&self, fp: &str, flag: &str) -> Result<()> {
+        if flag.is_empty() || flag.contains(',') || flag.contains(char::is_whitespace) {
+            anyhow::bail!(
+                "invalid flag {:?}: must be non-empty and contain no commas or whitespace",
+                flag
+            );
+        }
         let conn  = self.conn.lock().unwrap();
         // Read current flags, add only if not already present
         let current: Option<String> = conn

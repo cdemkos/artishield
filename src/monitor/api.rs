@@ -29,6 +29,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::{broadcast, RwLock};
+use axum::http::Method;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{debug, info};
 
@@ -46,9 +47,12 @@ pub struct ApiState {
 // ── Router ────────────────────────────────────────────────────────────────────
 
 pub async fn serve(state: ApiState, addr: SocketAddr) -> anyhow::Result<()> {
+    // Read-only cross-origin access is fine for monitoring dashboards.
+    // POST and DELETE are restricted to same-origin to prevent CSRF attacks
+    // (e.g. a malicious site unblocking IPs or whitelisting Sybil relays).
     let cors = CorsLayer::new()
         .allow_origin(Any)
-        .allow_methods(Any)
+        .allow_methods([Method::GET])
         .allow_headers(Any);
 
     let app = Router::new()
@@ -145,6 +149,14 @@ async fn flag_relay(
     Path(fp): Path<String>,
     Json(body): Json<FlagBody>,
 ) -> impl IntoResponse {
+    // Validate flag before touching the DB
+    if body.flag.is_empty() || body.flag.contains(',') || body.flag.contains(char::is_whitespace) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "flag must be non-empty and contain no commas or whitespace",
+        )
+            .into_response();
+    }
     if !s.store.relay_exists(&fp) {
         return (StatusCode::NOT_FOUND, format!("relay {fp} not in reputation store"))
             .into_response();

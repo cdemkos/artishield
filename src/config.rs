@@ -13,7 +13,17 @@ pub struct ShieldConfig {
     #[serde(default)]                   pub mitigations:MitigationConfig,
 }
 impl Default for ShieldConfig {
-    fn default() -> Self { toml::from_str("").expect("empty toml → defaults") }
+    fn default() -> Self {
+        Self {
+            socks_addr:  default_socks(),
+            api_addr:    default_api(),
+            db_path:     default_db(),
+            geoip_db:    None,
+            log_level:   default_log(),
+            detectors:   DetectorConfig::default(),
+            mitigations: MitigationConfig::default(),
+        }
+    }
 }
 impl ShieldConfig {
     pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
@@ -35,7 +45,18 @@ pub struct DetectorConfig {
     #[serde(default = "d5")]   pub guard_rotation_max:           u32,
     #[serde(default = "d07")]  pub alert_threshold:              f64,
 }
-impl Default for DetectorConfig { fn default() -> Self { toml::from_str("").unwrap() } }
+impl Default for DetectorConfig {
+    fn default() -> Self {
+        Self {
+            sybil_subnet_check:           yes(),
+            sybil_asn_max_hops:           d1(),
+            timing_correlation_threshold: d06(),
+            timing_window_secs:           d30(),
+            guard_rotation_max:           d5(),
+            alert_threshold:              d07(),
+        }
+    }
+}
 fn yes()  -> bool  { true }
 fn d1()   -> usize { 1    }
 fn d06()  -> f64   { 0.6  }
@@ -49,5 +70,13 @@ pub struct MitigationConfig {
     #[serde(default = "no")]  pub auto_circuit_rotate:  bool,
     #[serde(default = "no")]  pub entry_ip_filter:      bool,
 }
-impl Default for MitigationConfig { fn default() -> Self { toml::from_str("").unwrap() } }
+impl Default for MitigationConfig {
+    fn default() -> Self {
+        Self {
+            guard_pin:           yes(),
+            auto_circuit_rotate: no(),
+            entry_ip_filter:     no(),
+        }
+    }
+}
 fn no() -> bool { false }
