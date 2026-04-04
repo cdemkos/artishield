@@ -41,8 +41,8 @@ ReadWritePaths=/var/lib/artishield
 # Allow reading the MaxMind DB
 ReadOnlyPaths=/opt/artishield
 
-# Network: need to reach arti's SOCKS port
-# RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Network: SOCKS (TCP) + arti's Unix socket (if configured)
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 # Logging
 StandardOutput=journal

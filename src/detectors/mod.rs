@@ -19,5 +19,3 @@ use tokio::sync::broadcast;
 
 /// Sender — detectors clone this to emit events.
 pub type EventTx = broadcast::Sender<ThreatEvent>;
-/// Receiver — consumers subscribe via `tx.subscribe()`.
-pub type EventRx = broadcast::Receiver<ThreatEvent>;

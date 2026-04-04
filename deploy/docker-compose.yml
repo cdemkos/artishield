@@ -1,8 +1,7 @@
-version: "3.9"
-
 # ArtiShield — full monitoring stack
 #
 # Usage:
+#   cp .env.example .env        # set GRAFANA_ADMIN_PASSWORD
 #   docker compose up -d
 #   open http://localhost:7878   (ArtiShield dashboard)
 #   open http://localhost:3000   (Grafana)
@@ -38,7 +37,7 @@ services:
     container_name: artishield
     restart: unless-stopped
     ports:
-      - "7878:7878"
+      - "127.0.0.1:7878:7878"
     volumes:
       - artishield-data:/var/lib/artishield
       - ./artishield.toml:/opt/artishield/artishield.toml:ro
@@ -60,7 +59,7 @@ services:
     container_name: prometheus
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -78,11 +77,12 @@ services:
     container_name: grafana
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - grafana-data:/var/lib/grafana
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: "artishield"
+      # Set GRAFANA_ADMIN_PASSWORD in .env — never use the default in production.
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}"
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: ""

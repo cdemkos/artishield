@@ -4,10 +4,15 @@
 //!
 //! | Feature | Default | Description |
 //! |---------|---------|-------------|
-//! | `arti-hooks` | yes | Real arti integration via `experimental-api` |
-//! | `geoip` | yes | MaxMind GeoLite2-ASN for ASN-based Sybil detection |
+//! | `arti-hooks` | **no** | Real arti integration via `experimental-api` |
+//! | `geoip` | **yes** | MaxMind GeoLite2-ASN for ASN-based Sybil detection |
 //!
-//! Build without arti for unit-testing the core logic:
+//! Build with full arti integration:
+//! ```bash
+//! cargo build --release --features arti-hooks
+//! ```
+//!
+//! Build without any optional features (CI / unit tests):
 //! ```bash
 //! cargo test --no-default-features
 //! ```

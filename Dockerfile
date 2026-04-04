@@ -35,9 +35,10 @@ RUN cargo build --release --no-default-features && \
 # ── Stage 2: Runtime ───────────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
 
-# ca-certificates needed for TLS in timing probes
+# ca-certificates: TLS in timing probes
+# curl: used by HEALTHCHECK CMD
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
+    ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user
