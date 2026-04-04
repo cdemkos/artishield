@@ -39,6 +39,7 @@ pub struct CircuitHop {
 
 // ── Detector ─────────────────────────────────────────────────────────────────
 
+#[cfg_attr(not(feature = "arti-hooks"), allow(dead_code))]
 pub struct SybilDetector {
     config: ShieldConfig,
     tx:     EventTx,

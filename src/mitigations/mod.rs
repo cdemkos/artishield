@@ -22,6 +22,7 @@ use tracing::{info, warn};
 
 #[cfg(not(feature = "arti-hooks"))]
 pub struct MitigationEngine {
+    #[allow(dead_code)]
     config: ShieldConfig,
     rx:     broadcast::Receiver<ThreatEvent>,
     store:  Arc<ReputationStore>,
@@ -54,14 +55,22 @@ impl MitigationEngine {
         match &evt.kind {
             ThreatKind::SybilCluster { affected_fps, shared_asn, .. } => {
                 for fp in affected_fps {
-                    let _ = self.store.update_relay(fp, evt.anomaly_score, *shared_asn, None);
-                    let _ = self.store.add_flag(fp, "sybil");
+                    if let Err(e) = self.store.update_relay(fp, evt.anomaly_score, *shared_asn, None) {
+                        warn!(fp, "Failed to update relay reputation: {e}");
+                    }
+                    if let Err(e) = self.store.add_flag(fp, "sybil") {
+                        warn!(fp, "Failed to add sybil flag: {e}");
+                    }
                 }
             }
             ThreatKind::GuardDiscovery { suspicious_fingerprints, .. } => {
                 for fp in suspicious_fingerprints {
-                    let _ = self.store.update_relay(fp, evt.anomaly_score * 0.5, None, None);
-                    let _ = self.store.add_flag(fp, "guard_suspicious");
+                    if let Err(e) = self.store.update_relay(fp, evt.anomaly_score * 0.5, None, None) {
+                        warn!(fp, "Failed to update relay reputation: {e}");
+                    }
+                    if let Err(e) = self.store.add_flag(fp, "guard_discovery") {
+                        warn!(fp, "Failed to add guard_discovery flag: {e}");
+                    }
                 }
             }
             _ => {}
@@ -146,14 +155,22 @@ mod arti_engine {
             match &evt.kind {
                 ThreatKind::SybilCluster { affected_fps, shared_asn, .. } => {
                     for fp in affected_fps {
-                        let _ = self.store.update_relay(fp, evt.anomaly_score, *shared_asn, None);
-                        let _ = self.store.add_flag(fp, "sybil");
+                        if let Err(e) = self.store.update_relay(fp, evt.anomaly_score, *shared_asn, None) {
+                            warn!(fp, "Failed to update relay reputation: {e}");
+                        }
+                        if let Err(e) = self.store.add_flag(fp, "sybil") {
+                            warn!(fp, "Failed to add sybil flag: {e}");
+                        }
                     }
                 }
                 ThreatKind::GuardDiscovery { suspicious_fingerprints, .. } => {
                     for fp in suspicious_fingerprints {
-                        let _ = self.store.update_relay(fp, evt.anomaly_score * 0.5, None, None);
-                        let _ = self.store.add_flag(fp, "guard_suspicious");
+                        if let Err(e) = self.store.update_relay(fp, evt.anomaly_score * 0.5, None, None) {
+                            warn!(fp, "Failed to update relay reputation: {e}");
+                        }
+                        if let Err(e) = self.store.add_flag(fp, "guard_discovery") {
+                            warn!(fp, "Failed to add guard_discovery flag: {e}");
+                        }
                     }
                 }
                 _ => {}

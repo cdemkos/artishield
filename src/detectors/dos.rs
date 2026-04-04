@@ -44,6 +44,7 @@ struct LatSample {
 // ── Detector ─────────────────────────────────────────────────────────────────
 
 pub struct DosDetector {
+    #[allow(dead_code)]
     config:     ShieldConfig,
     tx:         EventTx,
     socks_addr: SocketAddr,
@@ -88,13 +89,18 @@ impl DosDetector {
     // ── Statistics ────────────────────────────────────────────────────────────
 
     fn median(vals: &mut Vec<f64>) -> f64 {
-        vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        vals.retain(|v| v.is_finite());
+        if vals.is_empty() { return 0.0; }
+        vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         vals[vals.len() / 2]
     }
 
     fn p95(vals: &mut Vec<f64>) -> f64 {
-        vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        vals[((vals.len() as f64) * 0.95) as usize]
+        vals.retain(|v| v.is_finite());
+        if vals.is_empty() { return 0.0; }
+        vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let idx = ((vals.len() as f64 * 0.95) as usize).min(vals.len() - 1);
+        vals[idx]
     }
 
     fn cov(xs: &[f64]) -> f64 {

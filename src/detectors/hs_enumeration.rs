@@ -16,7 +16,9 @@ use std::{
     net::IpAddr,
     time::{Duration, Instant},
 };
-use tracing::{debug, info, warn};
+use tracing::warn;
+#[cfg(feature = "arti-hooks")]
+use tracing::{debug, info};
 
 fn prefix24(ip: IpAddr) -> Option<String> {
     match ip {
@@ -30,6 +32,7 @@ pub struct HsDirSnapshot {
     pub fps: HashMap<String, Option<IpAddr>>,
 }
 
+#[cfg_attr(not(feature = "arti-hooks"), allow(dead_code))]
 pub struct HsEnumDetector {
     config:      ShieldConfig,
     tx:          EventTx,

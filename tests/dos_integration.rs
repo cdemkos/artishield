@@ -3,7 +3,6 @@
 use artishield::{
     ShieldConfig,
     detectors::dos::DosDetector,
-    event::ThreatKind,
 };
 use tokio::sync::broadcast;
 
