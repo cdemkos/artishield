@@ -145,6 +145,10 @@ async fn flag_relay(
     Path(fp): Path<String>,
     Json(body): Json<FlagBody>,
 ) -> impl IntoResponse {
+    if !s.store.relay_exists(&fp) {
+        return (StatusCode::NOT_FOUND, format!("relay {fp} not in reputation store"))
+            .into_response();
+    }
     match s.store.add_flag(&fp, &body.flag) {
         Ok(_)  => (StatusCode::OK, "flagged").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),

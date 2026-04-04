@@ -278,8 +278,25 @@ impl ReputationStore {
         self.conn
             .lock()
             .unwrap()
-            .query_row("SELECT COUNT(*) FROM blocked_ips", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM blocked_ips \
+                 WHERE expires_at IS NULL OR expires_at > ?1",
+                params![Utc::now().to_rfc3339()],
+                |r| r.get(0),
+            )
             .unwrap_or(0)
+    }
+
+    pub fn relay_exists(&self, fp: &str) -> bool {
+        self.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT 1 FROM relay_reputation WHERE fingerprint=?1",
+                params![fp],
+                |_| Ok(true),
+            )
+            .unwrap_or(false)
     }
 }
 
@@ -338,12 +355,30 @@ mod tests {
     fn block_and_unblock() {
         let s = ReputationStore::in_memory().unwrap();
         let ip: IpAddr = "1.2.3.4".parse().unwrap();
-        s.block_ip(ip, "test", None).unwrap();
+        s.block_ip(ip, "test", None).unwrap(); // permanent block (no expiry)
         assert_eq!(s.blocked_ip_count(), 1);
         assert!(s.is_blocked(&ip));
         s.unblock_ip("1.2.3.4").unwrap();
         assert_eq!(s.blocked_ip_count(), 0);
         assert!(!s.is_blocked(&ip));
+    }
+
+    #[test]
+    fn expired_ip_not_counted() {
+        let s  = ReputationStore::in_memory().unwrap();
+        let ip: IpAddr = "9.9.9.9".parse().unwrap();
+        let past = chrono::Utc::now() - chrono::Duration::hours(1);
+        s.block_ip(ip, "test", Some(past)).unwrap();
+        assert_eq!(s.blocked_ip_count(), 0, "expired block must not be counted");
+        assert!(!s.is_blocked(&ip));
+    }
+
+    #[test]
+    fn relay_exists_returns_correct() {
+        let s = ReputationStore::in_memory().unwrap();
+        assert!(!s.relay_exists("UNKNOWN"));
+        s.update_relay("KNOWN", 0.5, None, None).unwrap();
+        assert!(s.relay_exists("KNOWN"));
     }
 
     #[test]
