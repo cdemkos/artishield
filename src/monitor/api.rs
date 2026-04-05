@@ -574,9 +574,47 @@ async function loadEvents() {
 connectWS();
 loadEvents();
 loadRelays();
-pollMetrics();
-setInterval(pollMetrics, 5000);
-setInterval(loadRelays, 30000);
+async function pollMetrics() {
+    console.log('📡 pollMetrics gestartet...');
+
+    try {
+        const response = await fetch('/api/metrics');
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+
+        const data = await response.json();
+        console.log('📦 Metrics erhalten:', data);
+
+        // --- Live-Metrik-Elemente aktualisieren ---
+        document.getElementById('anomaly-score').textContent = data.anomaly_score?.toFixed(3) || '0.000';
+        document.getElementById('blocked-count').textContent = data.blocked || 0;
+        document.getElementById('events-count').textContent = data.events || 0;
+        document.getElementById('circuits-count').textContent = data.circuits || 0;
+
+        // Anomaly-Score Fortschrittsbalken
+        const scoreBar = document.getElementById('anomaly-bar');
+        if (scoreBar) scoreBar.style.width = Math.min((data.anomaly_score || 0) * 100, 100) + '%';
+
+        // Arti-Status
+        const artiStatus = document.getElementById('arti-status');
+        if (artiStatus) {
+            if (data.arti_online) {
+                artiStatus.innerHTML = '<span style="color:#0f0">● arti online</span>';
+            } else {
+                artiStatus.innerHTML = '<span style="color:#f00">● arti offline</span>';
+            }
+        }
+
+        // Threat Level
+        const threatEl = document.getElementById('threat-level');
+        if (threatEl && data.threat_level) {
+            threatEl.textContent = data.threat_level.toUpperCase();
+        }
+
+    } catch (err) {
+        console.error('❌ pollMetrics Fehler:', err);
+        // Kein Absturz der Seite – nur in Console
+    }
+}
 </script>
 </body>
 </html>"#;
