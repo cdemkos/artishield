@@ -31,14 +31,19 @@ use tracing::{debug, warn};
 /// A single circuit hop for Sybil analysis.
 #[derive(Debug, Clone)]
 pub struct CircuitHop {
+    /// Hex-encoded RSA fingerprint of this relay.
     pub fingerprint: String,
+    /// Known socket addresses of this relay.
     pub addrs:       Vec<SocketAddr>,
+    /// `true` if this relay has the Guard flag.
     pub is_guard:    bool,
+    /// `true` if this relay has the Exit flag.
     pub is_exit:     bool,
 }
 
 // ── Detector ─────────────────────────────────────────────────────────────────
 
+/// Detects Sybil attacks by identifying /24-subnet and ASN collisions in circuits and the network directory.
 #[cfg_attr(not(feature = "arti-hooks"), allow(dead_code))]
 pub struct SybilDetector {
     config: ShieldConfig,
@@ -48,6 +53,7 @@ pub struct SybilDetector {
 }
 
 impl SybilDetector {
+    /// Create a new `SybilDetector`, optionally loading a MaxMind GeoLite2-ASN database.
     pub fn new(config: ShieldConfig, tx: EventTx) -> Self {
         #[cfg(feature = "geoip")]
         let mmdb = config.geoip_db.as_ref().and_then(|p| {
@@ -101,6 +107,9 @@ impl SybilDetector {
 
     // ── Per-circuit hop check ─────────────────────────────────────────────────
 
+    /// Check a slice of circuit hops for /24-subnet or ASN collisions.
+    ///
+    /// Returns a `ThreatEvent` on the first collision found, or `None` if the circuit looks clean.
     pub fn check_hops(&self, hops: &[CircuitHop]) -> Option<ThreatEvent> {
         if hops.len() < 2 { return None; }
 

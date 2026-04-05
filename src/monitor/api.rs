@@ -37,15 +37,20 @@ use super::{metrics, SharedState};
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
+/// Axum application state injected into every HTTP handler.
 #[derive(Clone)]
 pub struct ApiState {
+    /// Shared runtime state (metrics, recent events, arti status).
     pub shared:   Arc<RwLock<SharedState>>,
+    /// Reputation store for relay and IP data.
     pub store:    Arc<ReputationStore>,
+    /// Event bus sender — WebSocket clients subscribe to its receiver.
     pub event_tx: broadcast::Sender<ThreatEvent>,
 }
 
 // ── Router ────────────────────────────────────────────────────────────────────
 
+/// Bind the Axum HTTP server to `addr` and serve the dashboard until the process exits.
 pub async fn serve(state: ApiState, addr: SocketAddr) -> anyhow::Result<()> {
     // Read-only cross-origin access is fine for monitoring dashboards.
     // POST and DELETE are restricted to same-origin to prevent CSRF attacks

@@ -37,6 +37,7 @@ fn deanon_prob(r_abs: f64) -> f64 {
     1.0 / (1.0 + (-12.0 * (r_abs - 0.5)).exp())
 }
 
+/// Detects timing-correlation attacks by measuring Pearson correlation between SOCKS5 RTTs and a burst signal.
 pub struct TimingDetector {
     config:     ShieldConfig,
     tx:         EventTx,
@@ -45,6 +46,7 @@ pub struct TimingDetector {
 }
 
 impl TimingDetector {
+    /// Create a new `TimingDetector` that probes through the SOCKS5 proxy at `socks_addr`.
     pub fn new(config: ShieldConfig, tx: EventTx, socks_addr: SocketAddr) -> Self {
         Self { config, tx, socks_addr, window: VecDeque::with_capacity(WINDOW + 1) }
     }
@@ -102,6 +104,7 @@ impl TimingDetector {
         if tick % period < period / 4 { 1.0 } else { 0.0 }
     }
 
+    /// Start the timing detector loop; runs indefinitely, emitting events onto `tx`.
     pub async fn run(mut self) {
         info!(socks = %self.socks_addr, "TimingDetector: probing via arti SOCKS5");
         let mut ticker = time::interval(Duration::from_secs(5));

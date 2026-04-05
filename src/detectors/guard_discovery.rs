@@ -24,17 +24,21 @@ fn prefix24(ip: IpAddr) -> Option<String> {
     }
 }
 
+/// A snapshot of the Guard-flagged relay set from one consensus.
 #[derive(Debug, Clone, Default)]
 pub struct GuardSnapshot {
+    /// Map of relay fingerprint → primary IPv4 address (if available).
     pub fps: HashMap<String, Option<IpAddr>>,
 }
 
 impl GuardSnapshot {
+    /// Return the set of all fingerprints in this snapshot.
     pub fn fingerprints(&self) -> HashSet<&str> {
         self.fps.keys().map(|s| s.as_str()).collect()
     }
 }
 
+/// Detects guard-discovery attacks by monitoring guard-flag churn across consensus updates.
 #[cfg_attr(not(feature = "arti-hooks"), allow(dead_code))]
 pub struct GuardDiscoveryDetector {
     config:   ShieldConfig,
@@ -43,10 +47,13 @@ pub struct GuardDiscoveryDetector {
 }
 
 impl GuardDiscoveryDetector {
+    /// Create a new `GuardDiscoveryDetector`.
     pub fn new(config: ShieldConfig, tx: EventTx) -> Self {
         Self { config, tx, previous: None }
     }
 
+    /// Compare two consecutive guard snapshots and emit events for significant churn
+    /// or /24-subnet injection clusters.
     pub fn analyse_transition(
         &mut self,
         prev: &GuardSnapshot,

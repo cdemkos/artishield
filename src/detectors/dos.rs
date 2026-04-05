@@ -24,7 +24,9 @@ use tracing::{debug, info, warn};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
+/// p95 connect latency must exceed `BASELINE_MULTIPLIER × baseline` to trigger an alert.
 pub const BASELINE_MULTIPLIER: f64 = 3.0;
+/// Minimum number of probe samples before establishing a baseline or emitting alerts.
 pub const MIN_SAMPLES:         usize = 10;
 
 const LAT_WINDOW:     usize    = 30;
@@ -43,6 +45,7 @@ struct LatSample {
 
 // ── Detector ─────────────────────────────────────────────────────────────────
 
+/// Detects circuit-stuffing and SENDME-burst DoS attacks via SOCKS5 latency probes.
 pub struct DosDetector {
     #[allow(dead_code)]
     config:     ShieldConfig,
@@ -53,6 +56,7 @@ pub struct DosDetector {
 }
 
 impl DosDetector {
+    /// Create a new `DosDetector` that probes through the SOCKS5 proxy at `socks_addr`.
     pub fn new(config: ShieldConfig, tx: EventTx, socks_addr: SocketAddr) -> Self {
         Self {
             config,
@@ -185,6 +189,7 @@ impl DosDetector {
 
     // ── Main loop ─────────────────────────────────────────────────────────────
 
+    /// Start the DoS detector loop; runs indefinitely, emitting events onto `tx`.
     pub async fn run(mut self) {
         info!(socks = %self.socks_addr, "DosDetector started");
         let mut ticker = time::interval(PROBE_INTERVAL);
