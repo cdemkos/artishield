@@ -16,11 +16,13 @@ use tracing::{debug, info};
 /// Maximum threat events kept in the database.
 const MAX_STORED_EVENTS: usize = 10_000;
 
+/// Thread-safe SQLite-backed store for relay reputation, threat events, and the IP blocklist.
 pub struct ReputationStore {
     conn: Mutex<Connection>,
 }
 
 impl ReputationStore {
+    /// Open (or create) the SQLite database at `path` and run schema migrations.
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         // WAL mode: concurrent reads don't block writes
@@ -31,6 +33,7 @@ impl ReputationStore {
         Ok(s)
     }
 
+    /// Create an in-memory database (used in unit tests).
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         let s = Self { conn: Mutex::new(conn) };
@@ -149,6 +152,7 @@ impl ReputationStore {
         Ok(())
     }
 
+    /// Return the current EMA reputation score for a relay fingerprint, or `0.0` if unknown.
     pub fn relay_score(&self, fp: &str) -> f64 {
         self.conn
             .lock()
@@ -161,6 +165,7 @@ impl ReputationStore {
             .unwrap_or(0.0)
     }
 
+    /// Return all relays whose reputation score is at or above `threshold`, ordered by score descending.
     pub fn suspicious_relays(&self, threshold: f64) -> Result<Vec<RelayRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -186,6 +191,7 @@ impl ReputationStore {
 
     // ── Events ─────────────────────────────────────────────────────────────────
 
+    /// Persist a `ThreatEvent` and prune the table to at most [`MAX_STORED_EVENTS`] rows.
     pub fn store_event(&self, evt: &ThreatEvent) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -209,6 +215,7 @@ impl ReputationStore {
         Ok(())
     }
 
+    /// Return up to `limit` most-recent events ordered by timestamp descending.
     pub fn recent_events(&self, limit: usize) -> Result<Vec<StoredEvent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -231,6 +238,7 @@ impl ReputationStore {
 
     // ── IP blocklist ───────────────────────────────────────────────────────────
 
+    /// Add `ip` to the blocklist with an optional expiry timestamp.
     pub fn block_ip(
         &self,
         ip:      IpAddr,
@@ -251,6 +259,7 @@ impl ReputationStore {
         Ok(())
     }
 
+    /// Remove `ip` from the blocklist. No-op if not present.
     pub fn unblock_ip(&self, ip: &str) -> Result<()> {
         let n = self.conn.lock().unwrap().execute(
             "DELETE FROM blocked_ips WHERE ip=?1",
@@ -262,6 +271,7 @@ impl ReputationStore {
         Ok(())
     }
 
+    /// Return `true` if `ip` is currently blocked (ignoring expired entries).
     pub fn is_blocked(&self, ip: &IpAddr) -> bool {
         self.conn
             .lock()
@@ -276,6 +286,7 @@ impl ReputationStore {
             .unwrap_or(false)
     }
 
+    /// Delete all expired blocklist entries and return the number of rows removed.
     pub fn prune_expired_blocks(&self) -> Result<usize> {
         Ok(self.conn.lock().unwrap().execute(
             "DELETE FROM blocked_ips WHERE expires_at IS NOT NULL AND expires_at < ?1",
@@ -283,6 +294,7 @@ impl ReputationStore {
         )?)
     }
 
+    /// Return the count of currently active (non-expired) blocked IPs.
     pub fn blocked_ip_count(&self) -> usize {
         self.conn
             .lock()
@@ -296,6 +308,7 @@ impl ReputationStore {
             .unwrap_or(0)
     }
 
+    /// Return `true` if a relay with fingerprint `fp` exists in the reputation table.
     pub fn relay_exists(&self, fp: &str) -> bool {
         self.conn
             .lock()
@@ -311,23 +324,37 @@ impl ReputationStore {
 
 // ── Record types ──────────────────────────────────────────────────────────────
 
+/// A relay's full reputation record as stored in the database.
 #[derive(Debug, Clone)]
 pub struct RelayRecord {
+    /// Hex-encoded RSA fingerprint of the relay.
     pub fingerprint:   String,
+    /// Current EMA reputation score `[0, 1]`.
     pub score:         f64,
+    /// Total number of circuits in which this relay has been observed.
     pub seen_circuits: i64,
+    /// RFC 3339 timestamp of the most recent observation.
     pub last_seen:     String,
+    /// Comma-separated flag labels attached to this relay (e.g. `"sybil,guard_discovery"`).
     pub flags:         String,
+    /// Autonomous System Number, if resolved.
     pub asn:           Option<i64>,
+    /// ISO 3166-1 alpha-2 country code, if resolved.
     pub country:       Option<String>,
 }
 
+/// A threat event row as returned from the `threat_events` table.
 #[derive(Debug, Clone)]
 pub struct StoredEvent {
+    /// UUIDv4 string identifier.
     pub id:            String,
+    /// RFC 3339 UTC timestamp.
     pub timestamp:     String,
+    /// Severity level string (e.g. `"HIGH"`).
     pub level:         String,
+    /// Human-readable description of the threat.
     pub message:       String,
+    /// Anomaly score `[0, 1]` at the time of detection.
     pub anomaly_score: f64,
 }
 

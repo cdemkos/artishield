@@ -20,6 +20,7 @@ use tracing::{info, warn};
 // WITHOUT arti-hooks  —  reputation-only engine
 // ═══════════════════════════════════════════════════════════════════
 
+/// Reacts to `ThreatEvent`s by updating relay reputation scores (no-arti-hooks mode).
 #[cfg(not(feature = "arti-hooks"))]
 pub struct MitigationEngine {
     #[allow(dead_code)]
@@ -30,6 +31,7 @@ pub struct MitigationEngine {
 
 #[cfg(not(feature = "arti-hooks"))]
 impl MitigationEngine {
+    /// Create a new `MitigationEngine` subscribed to `rx`.
     pub fn new(
         config: ShieldConfig,
         rx:     broadcast::Receiver<ThreatEvent>,
@@ -38,6 +40,7 @@ impl MitigationEngine {
         Self { config, rx, store }
     }
 
+    /// Start the mitigation loop; runs until the event bus is closed.
     pub async fn run(mut self) {
         info!("MitigationEngine started (no-arti-hooks mode)");
         loop {

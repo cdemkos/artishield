@@ -33,25 +33,32 @@ use tracing::warn;
 /// State shared between the monitor tasks and the HTTP API.
 #[derive(Default)]
 pub struct SharedState {
+    /// Ring buffer of the most recent threat events (up to 200).
     pub recent_events: Vec<ThreatEvent>,
+    /// Latest metrics snapshot served by `/api/metrics`.
     pub metrics:       MetricsSnapshot,
+    /// Exponentially smoothed composite anomaly score `[0, 1]`.
     pub anomaly_score: f64,
     /// Human-readable arti connection status shown in the dashboard.
-    /// Values: "booting" | "connecting" | "online" | "no-arti" | "error: …"
+    /// Values: `"booting"` | `"connecting"` | `"online"` | `"no-arti"` | `"error: …"`
     pub arti_status:   String,
 }
 
 // ── Main struct ───────────────────────────────────────────────────────────────
 
+/// Top-level orchestrator: wires detectors, mitigations, storage, and the HTTP API together.
 pub struct ArtiShield {
+    /// Loaded configuration used to initialise all subsystems.
     pub config: ShieldConfig,
 }
 
 impl ArtiShield {
+    /// Create a new `ArtiShield` from the given configuration.
     pub fn new(config: ShieldConfig) -> Result<Self> {
         Ok(Self { config })
     }
 
+    /// Start all subsystems and block until the HTTP server exits.
     pub async fn run(self) -> Result<()> {
         // ── Storage ───────────────────────────────────────────────────────────
         let store = Arc::new(ReputationStore::open(&self.config.db_path)?);

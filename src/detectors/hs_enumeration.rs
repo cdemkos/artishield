@@ -27,11 +27,14 @@ fn prefix24(ip: IpAddr) -> Option<String> {
     }
 }
 
+/// A snapshot of all HSDir-flagged relays from one consensus.
 #[derive(Debug, Clone, Default)]
 pub struct HsDirSnapshot {
+    /// Map of relay fingerprint → primary IPv4 address (if available).
     pub fps: HashMap<String, Option<IpAddr>>,
 }
 
+/// Detects hidden-service enumeration attacks via HSDir concentration and descriptor-fetch rates.
 #[cfg_attr(not(feature = "arti-hooks"), allow(dead_code))]
 pub struct HsEnumDetector {
     config:      ShieldConfig,
@@ -40,6 +43,7 @@ pub struct HsEnumDetector {
 }
 
 impl HsEnumDetector {
+    /// Create a new `HsEnumDetector`.
     pub fn new(config: ShieldConfig, tx: EventTx) -> Self {
         Self {
             config,
@@ -48,6 +52,7 @@ impl HsEnumDetector {
         }
     }
 
+    /// Analyse an `HsDirSnapshot` for /24-subnet concentration and return any threat events.
     pub fn analyse_hsdir(&self, snap: &HsDirSnapshot) -> Vec<ThreatEvent> {
         let total = snap.fps.len();
         if total < 10 { return vec![]; }
@@ -87,6 +92,7 @@ impl HsEnumDetector {
         events
     }
 
+    /// Record one HS descriptor fetch and return a threat event if the rate exceeds the limit.
     pub fn record_desc_fetch(&mut self) -> Option<ThreatEvent> {
         let now = Instant::now();
         self.desc_window.push_back(now);
