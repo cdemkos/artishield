@@ -479,35 +479,66 @@ function renderEvents() {
   }).join('');
 }
 
-async function pollMetrics() {
-  try {
-    const m = await fetch('/api/metrics').then(r=>r.json());
-    const score = m.anomaly_score || 0;
-    const pct   = Math.round(score*100);
-    const color = score>.7?'var(--red)':score>.4?'var(--amber)':'var(--green)';
+async function loadRelays() {
+    console.log('🔄 Aktualisieren gestartet...');
+    
+    const tb = document.getElementById('relay-tbody');
+    if (!tb) {
+        console.error('❌ #relay-tbody nicht gefunden!');
+        return;
+    }
 
-    document.getElementById('m-score').textContent   = score.toFixed(3);
-    document.getElementById('m-score').style.color   = color;
-    document.getElementById('m-blocked').textContent = m.blocked_ips||0;
-    document.getElementById('m-events').textContent  = m.events_last_minute||0;
-    document.getElementById('m-circuits').textContent= m.active_circuits>0?m.active_circuits:'—';
-    document.getElementById('gauge').style.width      = `${pct}%`;
-    document.getElementById('gauge').style.background = color;
-    document.getElementById('gauge-pct').textContent  = `${pct}%`;
-    document.getElementById('guard-fp').textContent   = m.guard_fingerprint||'—';
+    try {
+        const response = await fetch('/api/relays/suspicious');
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        
+        let rs = await response.json();
+        console.log('📦 ' + rs.length + ' verdächtige Relays geladen');
 
-    const lvl  = m.threat_level||'INFO';
-    const tlEl = document.getElementById('threat-level');
-    tlEl.textContent = lvl; tlEl.className = `ev-lvl ev-${lvl}`;
+        // Nur die schlimmsten 1000 anzeigen + nach Score sortieren
+        rs = rs
+            .sort((a, b) => (b.score || 0) - (a.score || 0))
+            .slice(0, 1000);
 
-    const as_  = m.arti_status||'';
-    const box  = document.getElementById('arti-box');
-    if (as_==='online')           { box.className='arti-box arti-online';  box.textContent='● arti online'; }
-    else if (as_==='connecting')  { box.className='arti-box arti-connect'; box.textContent='◌ Verbinde mit Tor…'; }
-    else if (as_==='no-arti')     { box.className='arti-box arti-noarti';  box.textContent='○ Kein arti (SOCKS-Modus)'; }
-    else if (as_.startsWith('error')){ box.className='arti-box arti-error'; box.textContent='✕ '+as_; }
-    else                          { box.className='arti-box arti-noarti';  box.textContent='◌ '+as_; }
-  } catch(_) {}
+        if (!rs || rs.length === 0) {
+            tb.innerHTML = '<tr><td colspan="6" class="empty">Keine verdächtigen Relays</td></tr>';
+            return;
+        }
+
+        tb.innerHTML = rs.map(r => {
+            const score = r.score || 0;
+            const color = score > 0.7 ? 'var(--red)' : score > 0.4 ? 'var(--orange)' : 'var(--yellow)';
+            
+            // Flags robust machen (kann Array, String oder null sein)
+            let flagsHTML = '-';
+            if (Array.isArray(r.flags)) {
+                flagsHTML = r.flags.map(f => `<span class="flag">${f}</span>`).join(' ');
+            } else if (typeof r.flags === 'string' && r.flags.length > 0) {
+                flagsHTML = `<span class="flag">${r.flags}</span>`;
+            }
+
+            return `
+                <tr>
+                    <td><code>${r.fingerprint}</code></td>
+                    <td>
+                        <div class="score-bar">
+                            <span style="color:${color}; font-weight:bold;">${score.toFixed(3)}</span>
+                            <div class="bar" style="background:${color}; width:${Math.min(score*100, 100)}%"></div>
+                        </div>
+                    </td>
+                    <td>${r.circuits || 0}</td>
+                    <td>${flagsHTML}</td>
+                    <td>${r.asn || '-'}</td>
+                    <td>${r.country || r.land || r.city || '-'}</td>
+                </tr>`;
+        }).join('');
+
+        console.log('✅ Tabelle erfolgreich aktualisiert');
+
+    } catch (err) {
+        console.error('❌ loadRelays Fehler:', err);
+        tb.innerHTML = `<tr><td colspan="6" style="color:red">Fehler: ${err.message}</td></tr>`;
+    }
 }
 
 async function loadRelays() {
