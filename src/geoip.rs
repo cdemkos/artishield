@@ -32,10 +32,10 @@ impl GeoIpServiceInner {
         let asn: Option<maxminddb::geoip2::Asn> = self.asn_reader.lookup(ip).ok();
 
         GeoInfo {
-            country: city.and_then(|c| c.country.and_then(|co| co.iso_code.map(|s| s.to_string()))),
-            city: city.and_then(|c| c.city.and_then(|ci| ci.names.and_then(|n| n.get("de").or(n.get("en")).cloned()))),
-            asn: asn.and_then(|a| a.autonomous_system_number),
-            asn_name: asn.and_then(|a| a.autonomous_system_organization),
+            country: city.as_ref().and_then(|c| c.country.as_ref().and_then(|co| co.iso_code.map(|s| s.to_string()))),
+            city: city.and_then(|c| c.city.and_then(|ci| ci.names.and_then(|n| n.get("de").or(n.get("en")).map(|s| s.to_string())))),
+            asn: asn.as_ref().and_then(|a| a.autonomous_system_number),
+            asn_name: asn.and_then(|a| a.autonomous_system_organization.map(|s| s.to_string())),
         }
     }
 }

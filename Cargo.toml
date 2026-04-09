@@ -4,7 +4,6 @@ version     = "0.1.0"
 edition     = "2021"
 description = "Threat monitor & mitigation for arti (Tor Rust client)"
 license     = "MIT OR Apache-2.0"
-# MSRV matches arti's current requirement
 rust-version = "1.77"
 
 [[bin]]
@@ -19,7 +18,7 @@ path = "src/lib.rs"
 [features]
 default = ["geoip"]
 
-# Compile the real arti integration (requires network at build time for cargo fetch)
+# Real arti integration (requires network at build time for cargo fetch)
 arti-hooks = [
     "dep:arti-client",
     "dep:tor-rtcompat",
@@ -31,57 +30,71 @@ arti-hooks = [
 # MaxMind GeoIP support for ASN lookups
 geoip = ["dep:maxminddb"]
 
-# ── arti crates (optional — enabled via "arti-hooks" feature) ─────────────────
-# All tor-* crates MUST share the same minor version as arti-client.
-# Latest stable as of 2025-03: 0.37.0
-# "experimental-api" exposes TorClient::dirmgr() which is our main hook.
+# Bevy render-graph post-processing plugin
+bevy-plugin = [
+    "dep:bevy",
+    "dep:lru",
+    "dep:image",
+    "dep:reqwest",
+]
+
+# Bevy egui UI panel (implies bevy-plugin)
+bevy-ui = [
+    "bevy-plugin",
+    "dep:bevy_egui",
+]
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
 [dependencies]
-arti-client  = { version = "0.37", optional = true, features = [
-    "tokio",
-    "native-tls",
-    "experimental-api",
-] }
-tor-rtcompat = { version = "0.37", optional = true, features = ["tokio", "native-tls"] }
+# --- arti / core project deps ---
+arti-client  = { version = "0.37", optional = true, features = ["tokio","native-tls","experimental-api"] }
+tor-rtcompat = { version = "0.37", optional = true, features = ["tokio","native-tls"] }
 tor-netdir   = { version = "0.37", optional = true }
 tor-linkspec = { version = "0.37", optional = true }
 tor-llcrypto = { version = "0.37", optional = true }
 
-# ── async ─────────────────────────────────────────────────────────────────────
 tokio   = { version = "1", features = ["full"] }
 futures = "0.3"
 
-# ── serde ─────────────────────────────────────────────────────────────────────
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml       = "0.8"
 
-# ── logging ───────────────────────────────────────────────────────────────────
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# ── IP / GeoIP ────────────────────────────────────────────────────────────────
 ipnet      = { version = "2", features = ["serde"] }
 maxminddb  = { version = "0.23", optional = true }
 
-# ── SOCKS5 (TimingDetector — probes through arti's SOCKS port) ───────────────
-# tokio-socks speaks SOCKS5 to arti's external proxy; no arti-crate dep needed
 tokio-socks = "0.5"
 
-# ── storage ───────────────────────────────────────────────────────────────────
 rusqlite = { version = "0.37", features = ["bundled"] }
 
-# ── dashboard ─────────────────────────────────────────────────────────────────
 axum       = { version = "0.7", features = ["ws"] }
 tower-http = { version = "0.5", features = ["cors"] }
 
-# ── utilities ─────────────────────────────────────────────────────────────────
 anyhow    = "1"
 chrono    = { version = "0.4", features = ["serde"] }
 uuid      = { version = "1",   features = ["v4", "serde"] }
 clap      = { version = "4",   features = ["derive"] }
 
+# ── Bevy render integration (optional) ────────────────────────────────────────
+# bevy_pbr / bevy_core_pipeline are pulled in transitively when needed.
+bevy = { version = "0.11", default-features = false, features = ["bevy_render", "bevy_core_pipeline"], optional = true }
+
+# bevy_egui 0.21.x targets Bevy 0.11
+bevy_egui = { version = "0.21", optional = true }
+
+# Utilities used by the node implementation
+lru   = { version = "0.8",  optional = true }
+image = { version = "0.24", optional = true }
+
+# HTTP client (optional, used in tile prototype)
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], optional = true }
+
+# ── Profile / build optimization ─────────────────────────────────────────────
 [dev-dependencies]
-toml = "0.8"
+toml       = "0.8"
 tokio-test = "0.4"
 
 [profile.release]
@@ -89,7 +102,3 @@ opt-level     = 3
 lto           = "thin"
 codegen-units = 1
 strip         = true
-
-maxminddb = { version = "0.24", features = ["async"] }  # offizielle MaxMind Rust-Binding
-tokio = { version = "1", features = ["full"] }          # schon drin, aber sicherstellen
-serde = { version = "1.0", features = ["derive"] }      # für JSON in API
