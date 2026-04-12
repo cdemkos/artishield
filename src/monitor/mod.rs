@@ -215,7 +215,7 @@ impl ArtiShield {
         // This is the last thing we do — it blocks until the process exits.
         let addr = self.config.api_addr;
         info!(%addr, "Dashboard listening — http://{addr}/");
-        api::serve(api::ApiState { shared, store, event_tx: tx }, addr).await?;
+        api::serve(api::ApiState { shared, store, event_tx: tx, api_token: self.config.api_token.clone() }, addr).await?;
         Ok(())
     }
 }

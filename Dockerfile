@@ -49,8 +49,10 @@ WORKDIR /opt/artishield
 # Copy binary
 COPY --from=builder /build/target/release/artishield /usr/local/bin/artishield
 
-# Default config (can be overridden via bind mount or env)
-COPY artishield.toml /opt/artishield/artishield.toml
+# Bake the example config as the default.
+# Override at runtime by bind-mounting your own artishield.toml:
+#   -v ./artishield.toml:/opt/artishield/artishield.toml:ro
+COPY artishield.toml.example /opt/artishield/artishield.toml
 
 # Directory for SQLite DB
 RUN mkdir -p /var/lib/artishield && \

@@ -25,6 +25,14 @@ enum Command {
         #[arg(short, long, default_value_t = 0.5)]
         threshold: f64,
     },
+    /// Launch the Bevy native 3D globe app (requires feature `bevy-ui`).
+    #[cfg(feature = "bevy-ui")]
+    Native {
+        /// Disable the ArtiShield monitor; show a simulated demo instead.
+        /// Useful for testing the globe without a running arti instance.
+        #[arg(long, default_value_t = false)]
+        no_monitor: bool,
+    },
 }
 
 #[tokio::main]
@@ -75,11 +83,30 @@ async fn main() -> anyhow::Result<()> {
             }
             return Ok(());
         }
+        #[cfg(feature = "bevy-ui")]
+        Some(Command::Native { no_monitor }) => {
+            // Bevy takes over the main thread and never returns.
+            artishield::run_native_app(config, no_monitor);
+        }
+
         None => {}
     }
 
     eprintln!("Starting ArtiShield::run()...");
     let shield = ArtiShield::new(config)?;
+
+    // SIGTERM handler (systemd stop / docker stop) — Unix only.
+    // On Windows this future never resolves, so the select still compiles.
+    #[cfg(unix)]
+    let sigterm = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+        eprintln!("SIGTERM received — shutting down");
+    };
+    #[cfg(not(unix))]
+    let sigterm = std::future::pending::<()>();
 
     tokio::select! {
         result = shield.run() => {
@@ -91,6 +118,7 @@ async fn main() -> anyhow::Result<()> {
         _ = tokio::signal::ctrl_c() => {
             eprintln!("Ctrl-C received — shutting down");
         }
+        _ = sigterm => {}
     }
 
     Ok(())

@@ -1,0 +1,74 @@
+# Dockerfile.native — ArtiShield 3D Globe (Bevy native app, requires X11 or Wayland)
+#
+# Build:
+#   docker build -f Dockerfile.native -t artishield-native .
+#
+# Run (X11):
+#   xhost +local:docker
+#   docker run --rm -it \
+#     -e DISPLAY=$DISPLAY \
+#     -v /tmp/.X11-unix:/tmp/.X11-unix \
+#     artishield-native
+#
+# Run (Wayland — experimental):
+#   docker run --rm -it \
+#     -e WAYLAND_DISPLAY=$WAYLAND_DISPLAY \
+#     -e XDG_RUNTIME_DIR=/run/user/1000 \
+#     -v $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/run/user/1000/$WAYLAND_DISPLAY \
+#     artishield-native
+#
+# For a quick demo without a running arti instance:
+#   docker run ... artishield-native native --no-monitor
+
+# ── Stage 1: Build ─────────────────────────────────────────────────────────────
+FROM rust:1.77-slim-bookworm AS builder
+
+WORKDIR /build
+
+# Bevy 0.11 + X11 build deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev ca-certificates \
+    libx11-dev libxi-dev libxcursor-dev libxrandr-dev \
+    libudev-dev libasound2-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY Cargo.toml Cargo.lock ./
+
+# Cache deps layer
+RUN mkdir -p src && echo 'fn main(){}' > src/main.rs && \
+    echo 'pub fn dummy(){}' > src/lib.rs && \
+    mkdir -p assets/artishield && touch assets/artishield/effect.wgsl
+RUN cargo build --release --features bevy-ui 2>/dev/null || true
+
+# Real source
+COPY src/ src/
+COPY assets/ assets/
+RUN touch src/main.rs src/lib.rs
+
+RUN cargo build --release --features bevy-ui && \
+    strip target/release/artishield
+
+# ── Stage 2: Runtime ───────────────────────────────────────────────────────────
+FROM debian:bookworm-slim AS runtime
+
+# X11 + OpenGL + audio runtime libs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libx11-6 libxi6 libxcursor1 libxrandr2 \
+    libudev1 libasound2 \
+    libgl1 libgles2 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -r -s /bin/false -d /opt/artishield artishield
+WORKDIR /opt/artishield
+
+COPY --from=builder /build/target/release/artishield /usr/local/bin/artishield
+COPY artishield.toml.example /opt/artishield/artishield.toml
+
+RUN mkdir -p /var/lib/artishield && \
+    chown artishield:artishield /var/lib/artishield /opt/artishield
+
+USER artishield
+
+ENTRYPOINT ["artishield"]
+CMD ["--config", "/opt/artishield/artishield.toml", "native", "--no-monitor"]

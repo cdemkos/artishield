@@ -16,12 +16,12 @@ pub struct ArtishieldUiState {
 
 /// Add the ArtiShield egui panel to a Bevy [`App`].
 pub fn setup_ui(app: &mut App) {
-    app.add_plugin(EguiPlugin)
+    app.add_plugins(EguiPlugin)
         .insert_resource(ArtishieldUiState {
             show_fullscreen_button: cfg!(target_arch = "wasm32"),
             ..Default::default()
         })
-        .add_system(artishield_egui_system);
+        .add_systems(bevy::app::Update, artishield_egui_system);
 }
 
 /// Egui system that renders the ArtiShield overlay window.

@@ -1,5 +1,7 @@
 # artishield.toml — example configuration
-# Copy this file, adjust paths, then run: artishield --config artishield.toml
+# Copy this file and adjust to your setup:
+#   cp artishield.toml.example artishield.toml
+#   nano artishield.toml
 
 # arti's SOCKS5 proxy address.
 # The TimingDetector probes through this port; it must be reachable.
@@ -7,20 +9,29 @@
 socks_addr = "127.0.0.1:9150"
 
 # ArtiShield's own REST + WebSocket dashboard.
+# For bare metal: restrict to loopback if not behind a reverse proxy.
+# For Docker:     keep 0.0.0.0:7878 (mapped to 127.0.0.1 in docker-compose).
 api_addr = "0.0.0.0:7878"
 
-# SQLite database for relay reputation and event history.
-db_path = "artishield.db"
+# SQLite database path.
+# Bare metal / local dev:  db_path = "artishield.db"
+# systemd / Docker:        db_path = "/var/lib/artishield/artishield.db"
+db_path = "/var/lib/artishield/artishield.db"
 
 # Log level (RUST_LOG syntax). Override with env var RUST_LOG.
 log_level = "artishield=info,arti=error"
-socks_addr = "127.0.0.1:9150"
 
-[geoip]
-enabled = true
-# Passe diese Pfade auf deinem System an!
-city_db = "/pfad/zu/deiner/GeoLite2-City_XXXXXX/GeoLite2-City.mmdb"
-asn_db  = "/pfad/zu/deiner/GeoLite2-ASN_XXXXXX/GeoLite2-ASN.mmdb"
+# Optional: Bearer token for write API endpoints (POST /api/relay/:fp/flag,
+# DELETE /api/ip/:ip/unblock). If unset, write endpoints are restricted to
+# loopback (127.0.0.1) only — safe for local installs without extra config.
+# Generate a token: openssl rand -hex 32
+# api_token = "replace-with-a-strong-random-token"
+
+# Optional: MaxMind GeoLite2-ASN database for ASN-based Sybil detection.
+# Download free from https://dev.maxmind.com/geoip/geolite2-free-geolocation-data
+# Bare metal:  geoip_db = "/etc/artishield/GeoLite2-ASN.mmdb"
+# Docker:      geoip_db = "/opt/artishield/GeoLite2-ASN.mmdb"  (bind-mount the file)
+# geoip_db = "/etc/artishield/GeoLite2-ASN.mmdb"
 
 [detectors]
 # Sybil: alert if two circuit hops share the same /24 subnet.

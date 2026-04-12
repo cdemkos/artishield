@@ -1,16 +1,24 @@
 //! Axum HTTP + WebSocket + Prometheus dashboard API.
 //!
-//! | Method | Path                    | Description                   |
-//! |--------|-------------------------|-------------------------------|
-//! | GET    | /                       | Interactive HTML dashboard    |
-//! | GET    | /health                 | "ok"                          |
-//! | GET    | /api/metrics            | MetricsSnapshot + arti_status |
-//! | GET    | /api/events             | Last 100 ThreatEvents         |
-//! | GET    | /api/relays/suspicious  | Relays with score ≥ 0.5       |
-//! | POST   | /api/relay/:fp/flag     | Manually flag a relay         |
-//! | DELETE | /api/ip/:ip/unblock     | Remove IP from blocklist      |
-//! | GET    | /metrics                | Prometheus text exposition    |
-//! | GET    | /ws                     | WebSocket live event stream   |
+//! | Method | Path                    | Description                             |
+//! |--------|-------------------------|-----------------------------------------|
+//! | GET    | /                       | Interactive HTML dashboard (3D globe)   |
+//! | GET    | /health                 | "ok"                                    |
+//! | GET    | /api/metrics            | MetricsSnapshot + arti_status           |
+//! | GET    | /api/events             | Last 100 ThreatEvents                   |
+//! | GET    | /api/relays/suspicious  | Relays with score ≥ 0.5                 |
+//! | POST   | /api/relay/:fp/flag     | Manually flag a relay (auth required)   |
+//! | DELETE | /api/ip/:ip/unblock     | Remove IP from blocklist (auth required)|
+//! | GET    | /metrics                | Prometheus text exposition              |
+//! | GET    | /ws                     | WebSocket live event stream             |
+//!
+//! ## Write-endpoint authorisation
+//!
+//! If `api_token` is set in the config, POST/DELETE require:
+//!   `Authorization: Bearer <token>`
+//!
+//! If `api_token` is **not** set, write endpoints are restricted to loopback
+//! (127.0.0.1 / ::1) only — safe for local installs without extra config.
 
 use crate::{
     event::ThreatEvent,
@@ -19,9 +27,9 @@ use crate::{
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, State,
+        ConnectInfo, Path, State,
     },
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
     routing::{delete, get, post},
     Router,
@@ -41,20 +49,40 @@ use super::{metrics, SharedState};
 #[derive(Clone)]
 pub struct ApiState {
     /// Shared runtime state (metrics, recent events, arti status).
-    pub shared:   Arc<RwLock<SharedState>>,
+    pub shared:     Arc<RwLock<SharedState>>,
     /// Reputation store for relay and IP data.
-    pub store:    Arc<ReputationStore>,
+    pub store:      Arc<ReputationStore>,
     /// Event bus sender — WebSocket clients subscribe to its receiver.
-    pub event_tx: broadcast::Sender<ThreatEvent>,
+    pub event_tx:   broadcast::Sender<ThreatEvent>,
+    /// Optional Bearer token required for write endpoints (POST/DELETE).
+    /// `None` → restrict to loopback only.
+    pub api_token:  Option<String>,
+}
+
+// ── Auth helper ───────────────────────────────────────────────────────────────
+
+/// Returns `true` if the request is authorised to call write endpoints.
+///
+/// - Token configured → check `Authorization: Bearer <token>` header.
+/// - No token          → allow loopback addresses only.
+fn is_authorised(state: &ApiState, peer: &SocketAddr, headers: &HeaderMap) -> bool {
+    match &state.api_token {
+        Some(token) => headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|t| t == token.as_str())
+            .unwrap_or(false),
+        None => peer.ip().is_loopback(),
+    }
 }
 
 // ── Router ────────────────────────────────────────────────────────────────────
 
 /// Bind the Axum HTTP server to `addr` and serve the dashboard until the process exits.
 pub async fn serve(state: ApiState, addr: SocketAddr) -> anyhow::Result<()> {
-    // Read-only cross-origin access is fine for monitoring dashboards.
-    // POST and DELETE are restricted to same-origin to prevent CSRF attacks
-    // (e.g. a malicious site unblocking IPs or whitelisting Sybil relays).
+    // GET endpoints allow cross-origin access (monitoring dashboards, Prometheus scrapers).
+    // POST / DELETE are handled in-handler: either token-gated or loopback-only.
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([Method::GET])
@@ -74,7 +102,12 @@ pub async fn serve(state: ApiState, addr: SocketAddr) -> anyhow::Result<()> {
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    // into_make_service_with_connect_info provides ConnectInfo<SocketAddr> to handlers.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -116,6 +149,7 @@ async fn get_events(State(s): State<ApiState>) -> Json<Vec<EventDto>> {
                 message:       e.message.clone(),
                 anomaly_score: e.anomaly_score,
                 mitigations:   e.suggested_mitigations.clone(),
+                kind:          serde_json::to_value(&e.kind).unwrap_or_default(),
             })
             .collect(),
     )
@@ -150,17 +184,22 @@ struct FlagBody {
 }
 
 async fn flag_relay(
-    State(s): State<ApiState>,
-    Path(fp): Path<String>,
-    Json(body): Json<FlagBody>,
+    State(s):              State<ApiState>,
+    ConnectInfo(peer):     ConnectInfo<SocketAddr>,
+    headers:               HeaderMap,
+    Path(fp):              Path<String>,
+    Json(body):            Json<FlagBody>,
 ) -> impl IntoResponse {
-    // Validate flag before touching the DB
+    if !is_authorised(&s, &peer, &headers) {
+        return (StatusCode::UNAUTHORIZED,
+                "Unauthorized — set Authorization: Bearer <token> or use loopback")
+            .into_response();
+    }
     if body.flag.is_empty() || body.flag.contains(',') || body.flag.contains(char::is_whitespace) {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
             "flag must be non-empty and contain no commas or whitespace",
-        )
-            .into_response();
+        ).into_response();
     }
     if !s.store.relay_exists(&fp) {
         return (StatusCode::NOT_FOUND, format!("relay {fp} not in reputation store"))
@@ -172,7 +211,17 @@ async fn flag_relay(
     }
 }
 
-async fn unblock_ip(State(s): State<ApiState>, Path(ip): Path<String>) -> impl IntoResponse {
+async fn unblock_ip(
+    State(s):          State<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers:           HeaderMap,
+    Path(ip):          Path<String>,
+) -> impl IntoResponse {
+    if !is_authorised(&s, &peer, &headers) {
+        return (StatusCode::UNAUTHORIZED,
+                "Unauthorized — set Authorization: Bearer <token> or use loopback")
+            .into_response();
+    }
     match s.store.unblock_ip(&ip) {
         Ok(_)  => {
             info!(ip, "IP unblocked via API");
@@ -188,8 +237,7 @@ async fn prometheus_metrics(State(s): State<ApiState>) -> Response {
         StatusCode::OK,
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
         body,
-    )
-        .into_response()
+    ).into_response()
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(s): State<ApiState>) -> Response {
@@ -212,9 +260,7 @@ async fn ws_loop(mut socket: WebSocket, mut rx: broadcast::Receiver<ThreatEvent>
             },
             msg = socket.recv() => match msg {
                 Some(Ok(Message::Close(_))) | None => break,
-                Some(Ok(Message::Ping(p))) => {
-                    let _ = socket.send(Message::Pong(p)).await;
-                }
+                Some(Ok(Message::Ping(p))) => { let _ = socket.send(Message::Pong(p)).await; }
                 _ => {}
             },
         }
@@ -232,6 +278,7 @@ struct EventDto {
     message:       String,
     anomaly_score: f64,
     mitigations:   Vec<String>,
+    kind:          serde_json::Value,
 }
 
 // ── Dashboard HTML ────────────────────────────────────────────────────────────
@@ -247,7 +294,7 @@ const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
   --bg:     #0d1117; --bg2: #161b22; --bg3: #21262d;
   --border: #30363d; --text: #c9d1d9; --muted: #8b949e;
   --green:  #3fb950; --red: #f85149; --amber: #d29922;
-  --blue:   #388bfd; --teal: #39d353;
+  --blue:   #388bfd; --teal: #39d353; --purple: #bc8cff;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: var(--bg); color: var(--text);
@@ -271,7 +318,7 @@ header p  { font-size: 11px; color: var(--muted); }
 main { display: grid; grid-template-columns: 260px 1fr; min-height: calc(100vh - 52px); }
 
 .sidebar { background:var(--bg2); border-right:1px solid var(--border);
-           padding:16px; display:flex; flex-direction:column; gap:14px; }
+           padding:16px; display:flex; flex-direction:column; gap:14px; overflow-y:auto; }
 
 .metric-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .metric-card { background:var(--bg3); border:1px solid var(--border);
@@ -295,19 +342,33 @@ main { display: grid; grid-template-columns: 260px 1fr; min-height: calc(100vh -
 .gauge-track { flex:1; height:6px; background:var(--bg3); border-radius:3px; overflow:hidden; }
 .gauge-fill  { height:100%; border-radius:3px; transition:width .4s,background .4s; }
 
-.content { padding:14px; display:flex; flex-direction:column; gap:12px; }
+.content { padding:14px; display:flex; flex-direction:column; gap:12px; overflow-y:auto; }
 .panel   { background:var(--bg2); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
 .panel-header { padding:9px 14px; font-size:11px; font-weight:600;
                 background:var(--bg3); border-bottom:1px solid var(--border);
                 display:flex; align-items:center; justify-content:space-between; }
 
+/* Globe */
+.globe-panel { position:relative; height:420px; background:#030810;
+               border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+#globe        { width:100%; height:100%; display:block; cursor:grab; }
+#globe:active { cursor:grabbing; }
+.globe-legend { position:absolute; bottom:10px; left:14px; display:flex; gap:10px;
+                font-size:9px; color:var(--muted); }
+.globe-legend span { display:flex; align-items:center; gap:4px; }
+.globe-legend .dot { width:6px; height:6px; border-radius:50%; }
+#globe-fallback { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+                  text-align:center; color:var(--muted); font-size:12px; line-height:1.8; }
+.globe-overlay { position:absolute; top:10px; right:14px; font-size:10px;
+                 color:rgba(100,150,200,.7); pointer-events:none; }
+
+/* Event log */
 .event-log { max-height:260px; overflow-y:auto; }
 .ev-entry  { display:flex; gap:8px; padding:5px 14px;
              border-bottom:1px solid var(--bg3); align-items:flex-start; }
 .ev-entry:last-child { border:none; }
 .ev-time  { color:var(--muted); flex-shrink:0; font-size:11px; width:76px; }
-.ev-lvl   { flex-shrink:0; padding:1px 6px; border-radius:3px;
-            font-size:9px; font-weight:700; }
+.ev-lvl   { flex-shrink:0; padding:1px 6px; border-radius:3px; font-size:9px; font-weight:700; }
 .ev-CRITICAL { background:#2e0d0d; color:var(--red); }
 .ev-HIGH     { background:#2e1a0d; color:var(--amber); }
 .ev-MEDIUM   { background:#1a1a0d; color:#cccc44; }
@@ -316,6 +377,7 @@ main { display: grid; grid-template-columns: 260px 1fr; min-height: calc(100vh -
 .ev-msg   { flex:1; font-size:11px; }
 .ev-score { flex-shrink:0; font-size:10px; color:var(--muted); }
 
+/* Relay table */
 .relay-table { width:100%; border-collapse:collapse; font-size:11px; }
 .relay-table th { font-size:9px; text-transform:uppercase; letter-spacing:.08em;
                   color:var(--muted); padding:4px 10px 6px; text-align:left;
@@ -337,7 +399,7 @@ main { display: grid; grid-template-columns: 260px 1fr; min-height: calc(100vh -
 </head>
 <body>
 <header>
-  <span style="font-size:22px">🧅</span>
+  <span style="font-size:22px">&#x1F9C5;</span>
   <div><h1>ArtiShield</h1><p>Tor / arti threat monitor</p></div>
   <div class="status-pill pill-ok" id="ws-pill">
     <div class="dot" style="background:var(--green)" id="ws-dot"></div>
@@ -377,7 +439,7 @@ main { display: grid; grid-template-columns: 260px 1fr; min-height: calc(100vh -
       <div class="section-title">Anomalie-Score</div>
       <div class="gauge-wrap">
         <div class="gauge-track">
-          <div class="gauge-fill" id="gauge" style="width:0%;background:var(--green)"></div>
+          <div class="gauge-fill" id="gauge-fill" style="width:0%;background:var(--green)"></div>
         </div>
         <span id="gauge-pct" style="font-size:11px;color:var(--muted);min-width:30px">0%</span>
       </div>
@@ -385,7 +447,7 @@ main { display: grid; grid-template-columns: 260px 1fr; min-height: calc(100vh -
 
     <div>
       <div class="section-title">arti Status</div>
-      <div id="arti-box" class="arti-box arti-noarti">◌ Initialisiere…</div>
+      <div id="arti-box" class="arti-box arti-noarti">&#9676; Initialisiere&hellip;</div>
     </div>
 
     <div>
@@ -400,19 +462,39 @@ main { display: grid; grid-template-columns: 260px 1fr; min-height: calc(100vh -
   </div>
 
   <div class="content">
+
+    <!-- 3D Globe -->
+    <div class="globe-panel">
+      <canvas id="globe"></canvas>
+      <div id="globe-fallback" style="display:none">
+        <div style="font-size:24px;margin-bottom:8px">&#x1F310;</div>
+        3D Globe nicht verf&uuml;gbar<br>
+        <span style="font-size:10px">(Three.js konnte nicht geladen werden)</span>
+      </div>
+      <div class="globe-legend">
+        <span><span class="dot" style="background:#f85149"></span>Critical</span>
+        <span><span class="dot" style="background:#d29922"></span>High</span>
+        <span><span class="dot" style="background:#cccc44"></span>Medium</span>
+        <span><span class="dot" style="background:#388bfd"></span>Relay</span>
+      </div>
+      <div class="globe-overlay" id="globe-arc-count"></div>
+    </div>
+
+    <!-- Event Log -->
     <div class="panel">
       <div class="panel-header">
         <span>Event Log</span>
         <span id="ev-count" class="badge">0 events</span>
       </div>
       <div class="event-log" id="ev-log">
-        <div class="empty">Warte auf Events…</div>
+        <div class="empty">Warte auf Events&hellip;</div>
       </div>
     </div>
 
+    <!-- Suspicious Relays -->
     <div class="panel">
       <div class="panel-header">
-        <span>Verdächtige Relays</span>
+        <span>Verd&auml;chtige Relays</span>
         <button class="btn" onclick="loadRelays()">Aktualisieren</button>
       </div>
       <table class="relay-table">
@@ -423,39 +505,291 @@ main { display: grid; grid-template-columns: 260px 1fr; min-height: calc(100vh -
           </tr>
         </thead>
         <tbody id="relay-tbody">
-          <tr><td colspan="6" class="empty">Lade…</td></tr>
+          <tr><td colspan="6" class="empty">Lade&hellip;</td></tr>
         </tbody>
       </table>
     </div>
+
   </div>
 </main>
 
+<!-- Three.js — loaded from CDN; globe degrades gracefully if offline -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <script>
+'use strict';
+
+// ── Country centroids (ISO-3166-1 alpha-2 → [lat, lon]) ────────────────────
+const CC = {
+  US:[37.1,-95.7], DE:[51.2,10.5], NL:[52.1,5.3],  FR:[46.2,2.2],   GB:[55.4,-3.4],
+  RU:[61.5,105.3], SE:[60.1,18.6], CH:[46.8,8.2],  CA:[56.1,-106.3],AU:[-25.3,133.8],
+  JP:[36.2,138.3], SG:[1.4,103.8], HK:[22.4,114.1],TW:[23.7,121.0], KR:[35.9,127.8],
+  CN:[35.9,104.2], UA:[48.4,31.2], PL:[51.9,19.2], CZ:[49.8,15.5],  AT:[47.5,14.6],
+  BE:[50.5,4.5],   FI:[62.0,26.0], NO:[60.5,8.5],  DK:[56.3,9.5],   IT:[41.9,12.6],
+  ES:[40.5,-4.0],  PT:[39.4,-8.2], LU:[49.8,6.1],  IS:[65.0,-19.0], LT:[55.2,23.9],
+  LV:[56.9,24.6],  EE:[58.6,25.0], BR:[-14.2,-51.9],AR:[-38.4,-63.6],MX:[23.6,-102.6],
+  ZA:[-30.6,22.9], IN:[20.6,78.9], IL:[31.0,34.9], TR:[39.0,35.2],  HU:[47.2,19.5],
+  BG:[42.7,25.5],  RO:[45.9,25.0], RS:[44.0,21.0], HR:[45.1,15.2],  SK:[48.7,19.7],
+  MD:[47.4,28.4],  KZ:[48.0,66.9], IR:[32.4,53.7], NG:[9.1,8.7],    EG:[26.8,30.8],
+  ZZ:[20.0,0.0],   // fallback: equator
+};
+
+// ── Globe state ────────────────────────────────────────────────────────────
+let globeScene, globeCamera, globeRenderer, globeMesh, dotGroup;
+let globeReady = false;
+let isDragging = false, prevMouse = {x:0, y:0};
+const arcs = [];        // {line, born, life}
+const relayMap = {};    // fingerprint → {lat, lon}
+
+function latLonToXYZ(lat, lon, r) {
+  r = r || 1.0;
+  const phi   = (90 - lat) * Math.PI / 180;
+  const theta = (lon + 180) * Math.PI / 180;
+  return new THREE.Vector3(
+    -r * Math.sin(phi) * Math.cos(theta),
+     r * Math.cos(phi),
+     r * Math.sin(phi) * Math.sin(theta)
+  );
+}
+
+function randLatLon() {
+  return [Math.random()*140 - 70, Math.random()*360 - 180];
+}
+
+function levelColor(lvl) {
+  switch ((lvl||'').toUpperCase()) {
+    case 'CRITICAL': return 0xf85149;
+    case 'HIGH':     return 0xd29922;
+    case 'MEDIUM':   return 0xcccc44;
+    case 'LOW':      return 0x388bfd;
+    default:         return 0x39d353;
+  }
+}
+
+function buildGraticule() {
+  const pts = [];
+  for (let lon = -180; lon <= 180; lon += 30) {
+    for (let lat = -88; lat < 88; lat += 3) {
+      pts.push(latLonToXYZ(lat, lon, 1.003));
+      pts.push(latLonToXYZ(lat+3, lon, 1.003));
+    }
+  }
+  for (let lat = -60; lat <= 60; lat += 30) {
+    for (let lon = -178; lon < 180; lon += 3) {
+      pts.push(latLonToXYZ(lat, lon, 1.003));
+      pts.push(latLonToXYZ(lat, lon+3, 1.003));
+    }
+  }
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  return new THREE.LineSegments(geo,
+    new THREE.LineBasicMaterial({color:0x1a3a5c, transparent:true, opacity:0.35}));
+}
+
+function buildStars() {
+  const positions = [];
+  for (let i = 0; i < 1200; i++) {
+    const v = new THREE.Vector3(
+      (Math.random()-0.5)*300,
+      (Math.random()-0.5)*300,
+      (Math.random()-0.5)*300
+    );
+    if (v.length() > 4) { positions.push(v.x, v.y, v.z); }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  return new THREE.Points(geo,
+    new THREE.PointsMaterial({color:0xffffff, size:0.4, transparent:true, opacity:0.55}));
+}
+
+function addRelayDot(lat, lon, score) {
+  if (!globeReady) return;
+  const pos   = latLonToXYZ(lat, lon, 1.012);
+  const s     = 0.010 + score * 0.012;
+  const color = score > 0.7 ? 0xf85149 : score > 0.4 ? 0xd29922 : 0x388bfd;
+  const mesh  = new THREE.Mesh(
+    new THREE.SphereGeometry(s, 6, 6),
+    new THREE.MeshBasicMaterial({color})
+  );
+  mesh.position.copy(pos);
+  dotGroup.add(mesh);
+}
+
+function createArc(p1, p2, color) {
+  const mid = p1.clone().add(p2).normalize().multiplyScalar(1.45 + Math.random()*0.15);
+  const curve = new THREE.QuadraticBezierCurve3(p1, mid, p2);
+  const pts   = curve.getPoints(70);
+  const geo   = new THREE.BufferGeometry().setFromPoints(pts);
+  return new THREE.Line(geo,
+    new THREE.LineBasicMaterial({color, transparent:true, opacity:0.85}));
+}
+
+function addGlobeArc(lat1, lon1, lat2, lon2, color) {
+  if (!globeReady) return;
+  const p1   = latLonToXYZ(lat1, lon1, 1.012);
+  const p2   = latLonToXYZ(lat2, lon2, 1.012);
+  const line = createArc(p1, p2, color);
+  globeScene.add(line);
+  arcs.push({line, born:Date.now(), life:5000});
+  const el = document.getElementById('globe-arc-count');
+  if (el) el.textContent = arcs.length + ' arcs';
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  if (!isDragging) globeMesh.rotation.y += 0.0015;
+  dotGroup.rotation.y = globeMesh.rotation.y;
+
+  const now = Date.now();
+  for (let i = arcs.length - 1; i >= 0; i--) {
+    const a = arcs[i];
+    const t = (now - a.born) / a.life;
+    if (t >= 1) {
+      globeScene.remove(a.line);
+      a.line.geometry.dispose();
+      a.line.material.dispose();
+      arcs.splice(i, 1);
+    } else {
+      a.line.material.opacity = 0.85 * (1 - t * t);
+    }
+  }
+  if (arcs.length === 0) {
+    const el = document.getElementById('globe-arc-count');
+    if (el) el.textContent = '';
+  }
+  globeRenderer.render(globeScene, globeCamera);
+}
+
+function initGlobe() {
+  if (typeof THREE === 'undefined') {
+    document.getElementById('globe').style.display = 'none';
+    document.getElementById('globe-fallback').style.display = 'block';
+    return;
+  }
+  const canvas = document.getElementById('globe');
+  const W = canvas.clientWidth  || 800;
+  const H = canvas.clientHeight || 420;
+
+  globeScene    = new THREE.Scene();
+  globeCamera   = new THREE.PerspectiveCamera(42, W/H, 0.1, 1000);
+  globeCamera.position.z = 2.6;
+
+  globeRenderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:true});
+  globeRenderer.setPixelRatio(window.devicePixelRatio);
+  globeRenderer.setSize(W, H);
+  globeRenderer.setClearColor(0x030810, 1);
+
+  // Stars
+  globeScene.add(buildStars());
+
+  // Atmosphere glow (back side)
+  const atmo = new THREE.Mesh(
+    new THREE.SphereGeometry(1.06, 64, 64),
+    new THREE.MeshPhongMaterial({color:0x1a4a8a, transparent:true, opacity:0.12, side:THREE.BackSide})
+  );
+  globeScene.add(atmo);
+
+  // Earth sphere
+  globeMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 64, 64),
+    new THREE.MeshPhongMaterial({color:0x0d2035, shininess:8})
+  );
+  globeScene.add(globeMesh);
+
+  // Ocean sheen
+  globeScene.add(new THREE.Mesh(
+    new THREE.SphereGeometry(1.001, 64, 64),
+    new THREE.MeshPhongMaterial({color:0x113355, transparent:true, opacity:0.25})
+  ));
+
+  // Graticule
+  globeScene.add(buildGraticule());
+
+  // Dot group (relay positions)
+  dotGroup = new THREE.Group();
+  globeScene.add(dotGroup);
+
+  // Lights
+  globeScene.add(new THREE.AmbientLight(0x223344, 1.2));
+  const sun = new THREE.PointLight(0x4488ff, 2.5, 20);
+  sun.position.set(5, 3, 5);
+  globeScene.add(sun);
+
+  // Mouse drag to rotate
+  canvas.addEventListener('mousedown', e => { isDragging=true; prevMouse={x:e.clientX,y:e.clientY}; });
+  window.addEventListener('mouseup',   () => { isDragging=false; });
+  window.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    const dx = e.clientX - prevMouse.x;
+    const dy = e.clientY - prevMouse.y;
+    globeMesh.rotation.y += dx * 0.005;
+    globeMesh.rotation.x += dy * 0.005;
+    dotGroup.rotation.y   = globeMesh.rotation.y;
+    dotGroup.rotation.x   = globeMesh.rotation.x;
+    prevMouse = {x:e.clientX, y:e.clientY};
+  });
+
+  // Resize
+  window.addEventListener('resize', () => {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    globeCamera.aspect = w / h;
+    globeCamera.updateProjectionMatrix();
+    globeRenderer.setSize(w, h);
+  });
+
+  globeReady = true;
+  animate();
+}
+
+// ── Dashboard logic ────────────────────────────────────────────────────────
 let events = [];
 let ws;
 
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws`);
-  ws.onopen  = () => setWS(true);
-  ws.onclose = () => { setWS(false); setTimeout(connectWS, 3000); };
-  ws.onerror = () => setWS(false);
-  ws.onmessage = e => { try { addEvent(JSON.parse(e.data)); } catch(_) {} };
+  ws = new WebSocket(proto + '://' + location.host + '/ws');
+  ws.onopen    = () => setWS(true);
+  ws.onclose   = () => { setWS(false); setTimeout(connectWS, 3000); };
+  ws.onerror   = () => setWS(false);
+  ws.onmessage = e => { try { handleEvent(JSON.parse(e.data)); } catch(_) {} };
 }
 
 function setWS(ok) {
   const pill  = document.getElementById('ws-pill');
   const dot   = document.getElementById('ws-dot');
   const label = document.getElementById('ws-label');
-  pill.className = ok ? 'status-pill pill-ok' : 'status-pill pill-err';
-  dot.style.background = ok ? 'var(--green)' : 'var(--red)';
-  label.textContent    = ok ? 'LIVE' : 'GETRENNT';
+  pill.className         = ok ? 'status-pill pill-ok' : 'status-pill pill-err';
+  dot.style.background   = ok ? 'var(--green)' : 'var(--red)';
+  label.textContent      = ok ? 'LIVE' : 'GETRENNT';
 }
 
-function addEvent(evt) {
+function handleEvent(evt) {
   events.unshift(evt);
   if (events.length > 200) events.pop();
   renderEvents();
+  fireGlobeArc(evt);
+}
+
+function fireGlobeArc(evt) {
+  const color = levelColor(evt.level);
+  let positions = [];
+
+  // Extract fingerprints from event kind
+  const kind = evt.kind || {};
+  const fps  = (kind.sybil_cluster    && kind.sybil_cluster.affected_fps)    ||
+               (kind.guard_discovery  && kind.guard_discovery.suspicious_fingerprints) ||
+               [];
+  fps.forEach(fp => { if (relayMap[fp]) positions.push(relayMap[fp]); });
+
+  if (positions.length >= 2) {
+    addGlobeArc(positions[0][0], positions[0][1], positions[1][0], positions[1][1], color);
+  } else if (positions.length === 1) {
+    // Arc from relay to a random destination
+    const dest = randLatLon();
+    addGlobeArc(positions[0][0], positions[0][1], dest[0], dest[1], color);
+  } else {
+    // Fallback: random arc for visual activity
+    const a = randLatLon(), b = randLatLon();
+    addGlobeArc(a[0], a[1], b[0], b[1], color);
+  }
 }
 
 function esc(s) {
@@ -464,157 +798,151 @@ function esc(s) {
 
 function renderEvents() {
   const log = document.getElementById('ev-log');
-  document.getElementById('ev-count').textContent = `${events.length} events`;
-  if (!events.length) { log.innerHTML='<div class="empty">Keine Events</div>'; return; }
+  document.getElementById('ev-count').textContent = events.length + ' events';
+  if (!events.length) { log.innerHTML = '<div class="empty">Keine Events</div>'; return; }
   log.innerHTML = events.slice(0,100).map(e => {
     const ts  = new Date(e.timestamp).toLocaleTimeString('de-DE');
     const lvl = e.level || 'INFO';
     const sc  = Math.round((e.anomaly_score||0)*100);
-    return `<div class="ev-entry">
-      <span class="ev-time">${ts}</span>
-      <span class="ev-lvl ev-${lvl}">${lvl}</span>
-      <span class="ev-msg">${esc(e.message)}</span>
-      <span class="ev-score">${sc}%</span>
-    </div>`;
+    return '<div class="ev-entry">' +
+      '<span class="ev-time">' + ts + '</span>' +
+      '<span class="ev-lvl ev-' + lvl + '">' + lvl + '</span>' +
+      '<span class="ev-msg">' + esc(e.message) + '</span>' +
+      '<span class="ev-score">' + sc + '%</span>' +
+      '</div>';
   }).join('');
 }
 
-async function loadRelays() {
-    console.log('🔄 Aktualisieren gestartet...');
-    
-    const tb = document.getElementById('relay-tbody');
-    if (!tb) {
-        console.error('❌ #relay-tbody nicht gefunden!');
-        return;
-    }
-
-    try {
-        const response = await fetch('/api/relays/suspicious');
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        
-        let rs = await response.json();
-        console.log('📦 ' + rs.length + ' verdächtige Relays geladen');
-
-        // Nur die schlimmsten 1000 anzeigen + nach Score sortieren
-        rs = rs
-            .sort((a, b) => (b.score || 0) - (a.score || 0))
-            .slice(0, 1000);
-
-        if (!rs || rs.length === 0) {
-            tb.innerHTML = '<tr><td colspan="6" class="empty">Keine verdächtigen Relays</td></tr>';
-            return;
-        }
-
-        tb.innerHTML = rs.map(r => {
-            const score = r.score || 0;
-            const color = score > 0.7 ? 'var(--red)' : score > 0.4 ? 'var(--orange)' : 'var(--yellow)';
-            
-            // Flags robust machen (kann Array, String oder null sein)
-            let flagsHTML = '-';
-            if (Array.isArray(r.flags)) {
-                flagsHTML = r.flags.map(f => `<span class="flag">${f}</span>`).join(' ');
-            } else if (typeof r.flags === 'string' && r.flags.length > 0) {
-                flagsHTML = `<span class="flag">${r.flags}</span>`;
-            }
-
-            return `
-                <tr>
-                    <td><code>${r.fingerprint}</code></td>
-                    <td>
-                        <div class="score-bar">
-                            <span style="color:${color}; font-weight:bold;">${score.toFixed(3)}</span>
-                            <div class="bar" style="background:${color}; width:${Math.min(score*100, 100)}%"></div>
-                        </div>
-                    </td>
-                    <td>${r.circuits || 0}</td>
-                    <td>${flagsHTML}</td>
-                    <td>${r.asn || '-'}</td>
-                    <td>${r.country || r.land || r.city || '-'}</td>
-                </tr>`;
-        }).join('');
-
-        console.log('✅ Tabelle erfolgreich aktualisiert');
-
-    } catch (err) {
-        console.error('❌ loadRelays Fehler:', err);
-        tb.innerHTML = `<tr><td colspan="6" style="color:red">Fehler: ${err.message}</td></tr>`;
-    }
-}
-
-async function loadRelays() {
+async function pollMetrics() {
   try {
-    const rs = await fetch('/api/relays/suspicious').then(r=>r.json());
-    const tb = document.getElementById('relay-tbody');
-    if (!rs||!rs.length) {
-      tb.innerHTML='<tr><td colspan="6" class="empty">Keine verdächtigen Relays</td></tr>'; return;
+    const data = await fetch('/api/metrics').then(r => r.json());
+
+    // Anomalie-Score
+    const score = data.anomaly_score || 0;
+    const scoreEl = document.getElementById('m-score');
+    if (scoreEl) {
+      scoreEl.textContent = score.toFixed(3);
+      scoreEl.style.color = score > 0.7 ? 'var(--red)' : score > 0.4 ? 'var(--amber)' : 'var(--green)';
     }
-    tb.innerHTML = rs.map(r => {
-      const sc = r.score||0;
-      const c  = sc>.7?'var(--red)':sc>.4?'var(--amber)':'var(--green)';
-      return `<tr>
-        <td style="font-family:monospace;font-size:10px">${esc(r.fingerprint||'—')}</td>
-        <td><span style="color:${c}">${sc.toFixed(3)}</span>
-            <div class="score-bar" style="width:${Math.round(sc*100)}%;background:${c}"></div></td>
-        <td>${r.seen_circuits||0}</td>
-        <td><span class="badge">${esc(r.flags||'—')}</span></td>
-        <td>${r.asn||'—'}</td>
-        <td>${esc(r.country||'—')}</td>
-      </tr>`;
-    }).join('');
-  } catch(_) {}
+
+    // Blocked IPs
+    const blockedEl = document.getElementById('m-blocked');
+    if (blockedEl) blockedEl.textContent = data.blocked_ips || 0;
+
+    // Events last minute
+    const evEl = document.getElementById('m-events');
+    if (evEl) evEl.textContent = data.events_last_minute || 0;
+
+    // Active circuits
+    const circEl = document.getElementById('m-circuits');
+    if (circEl) circEl.textContent = data.active_circuits > 0 ? data.active_circuits : '—';
+
+    // Gauge
+    const fillEl = document.getElementById('gauge-fill');
+    const pctEl  = document.getElementById('gauge-pct');
+    if (fillEl) {
+      const pct  = Math.min(score * 100, 100);
+      const gcol = score > 0.7 ? 'var(--red)' : score > 0.4 ? 'var(--amber)' : 'var(--green)';
+      fillEl.style.width      = pct + '%';
+      fillEl.style.background = gcol;
+    }
+    if (pctEl) pctEl.textContent = Math.round(score * 100) + '%';
+
+    // arti status
+    const artiEl = document.getElementById('arti-box');
+    if (artiEl) {
+      const st = data.arti_status || 'booting';
+      if (st === 'online') {
+        artiEl.className = 'arti-box arti-online';
+        artiEl.textContent = '● arti online';
+      } else if (st === 'connecting') {
+        artiEl.className = 'arti-box arti-connect';
+        artiEl.textContent = '◌ Verbinde mit Tor…';
+      } else if (st === 'no-arti') {
+        artiEl.className = 'arti-box arti-noarti';
+        artiEl.textContent = '○ SOCKS-Modus (kein arti)';
+      } else if (st.startsWith('error')) {
+        artiEl.className = 'arti-box arti-error';
+        artiEl.textContent = '✕ ' + st;
+      } else {
+        artiEl.className = 'arti-box arti-noarti';
+        artiEl.textContent = '◌ Initialisiere…';
+      }
+    }
+
+    // Threat level
+    const lvlEl = document.getElementById('threat-level');
+    if (lvlEl && data.threat_level) {
+      const lvl = data.threat_level.toUpperCase ? data.threat_level.toUpperCase() : String(data.threat_level).toUpperCase();
+      lvlEl.textContent = lvl;
+      lvlEl.className   = 'ev-lvl ev-' + lvl;
+      lvlEl.style.cssText = 'font-size:11px;padding:3px 8px';
+    }
+
+    // Guard fingerprint
+    const gpEl = document.getElementById('guard-fp');
+    if (gpEl) gpEl.textContent = data.guard_fingerprint || '—';
+
+  } catch(_) { /* server may be starting up */ }
 }
 
 async function loadEvents() {
   try {
-    events = await fetch('/api/events').then(r=>r.json());
+    events = await fetch('/api/events').then(r => r.json());
     renderEvents();
   } catch(_) {}
 }
 
+async function loadRelays() {
+  const tb = document.getElementById('relay-tbody');
+  if (!tb) return;
+  try {
+    const rs = await fetch('/api/relays/suspicious').then(r => r.json());
+    if (!rs || !rs.length) {
+      tb.innerHTML = '<tr><td colspan="6" class="empty">Keine verd&auml;chtigen Relays</td></tr>';
+      return;
+    }
+
+    // Update globe relay positions
+    if (globeReady) {
+      dotGroup.clear();
+      rs.forEach(r => {
+        const cc = (r.country || 'ZZ').toUpperCase();
+        const pos = CC[cc] || CC['ZZ'];
+        relayMap[r.fingerprint] = pos;
+        addRelayDot(pos[0], pos[1], r.score || 0);
+      });
+    }
+
+    // Sort by score descending, show top 1000
+    const sorted = rs.slice().sort((a,b) => (b.score||0) - (a.score||0)).slice(0, 1000);
+    tb.innerHTML = sorted.map(r => {
+      const sc  = r.score || 0;
+      const col = sc > 0.7 ? 'var(--red)' : sc > 0.4 ? 'var(--amber)' : 'var(--green)';
+      const flags = r.flags ? esc(r.flags) : '—';
+      return '<tr>' +
+        '<td style="font-family:monospace;font-size:10px">' + esc(r.fingerprint || '—') + '</td>' +
+        '<td><span style="color:' + col + '">' + sc.toFixed(3) + '</span>' +
+             '<div class="score-bar" style="width:' + Math.round(sc*100) + '%;background:' + col + '"></div></td>' +
+        '<td>' + (r.seen_circuits || 0) + '</td>' +
+        '<td><span class="badge">' + flags + '</span></td>' +
+        '<td>' + (r.asn || '—') + '</td>' +
+        '<td>' + esc(r.country || '—') + '</td>' +
+        '</tr>';
+    }).join('');
+  } catch(_) {
+    tb.innerHTML = '<tr><td colspan="6" style="color:var(--red);padding:8px 14px">Ladefehler</td></tr>';
+  }
+}
+
+// ── Bootstrap ──────────────────────────────────────────────────────────────
+initGlobe();
 connectWS();
 loadEvents();
 loadRelays();
-async function pollMetrics() {
-    console.log('📡 pollMetrics gestartet...');
-
-    try {
-        const response = await fetch('/api/metrics');
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-
-        const data = await response.json();
-        console.log('📦 Metrics erhalten:', data);
-
-        // --- Live-Metrik-Elemente aktualisieren ---
-        document.getElementById('anomaly-score').textContent = data.anomaly_score?.toFixed(3) || '0.000';
-        document.getElementById('blocked-count').textContent = data.blocked || 0;
-        document.getElementById('events-count').textContent = data.events || 0;
-        document.getElementById('circuits-count').textContent = data.circuits || 0;
-
-        // Anomaly-Score Fortschrittsbalken
-        const scoreBar = document.getElementById('anomaly-bar');
-        if (scoreBar) scoreBar.style.width = Math.min((data.anomaly_score || 0) * 100, 100) + '%';
-
-        // Arti-Status
-        const artiStatus = document.getElementById('arti-status');
-        if (artiStatus) {
-            if (data.arti_online) {
-                artiStatus.innerHTML = '<span style="color:#0f0">● arti online</span>';
-            } else {
-                artiStatus.innerHTML = '<span style="color:#f00">● arti offline</span>';
-            }
-        }
-
-        // Threat Level
-        const threatEl = document.getElementById('threat-level');
-        if (threatEl && data.threat_level) {
-            threatEl.textContent = data.threat_level.toUpperCase();
-        }
-
-    } catch (err) {
-        console.error('❌ pollMetrics Fehler:', err);
-        // Kein Absturz der Seite – nur in Console
-    }
-}
+pollMetrics();
+setInterval(pollMetrics, 5000);
+setInterval(loadRelays, 30000);
 </script>
 </body>
 </html>"#;

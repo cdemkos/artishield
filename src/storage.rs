@@ -22,6 +22,19 @@ pub struct ReputationStore {
 }
 
 impl ReputationStore {
+    /// Acquire the DB connection, recovering from a poisoned mutex rather than panicking.
+    ///
+    /// If a previous thread panicked while holding the lock, `PoisonError::into_inner()`
+    /// returns the underlying connection — SQLite connections survive panics safely.
+    fn db(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap_or_else(|e| {
+            tracing::error!("DB mutex was poisoned — recovering underlying connection");
+            e.into_inner()
+        })
+    }
+}
+
+impl ReputationStore {
     /// Open (or create) the SQLite database at `path` and run schema migrations.
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
@@ -42,7 +55,7 @@ impl ReputationStore {
     }
 
     fn migrate(&self) -> Result<()> {
-        self.conn.lock().unwrap().execute_batch(r#"
+        self.db().execute_batch(r#"
             CREATE TABLE IF NOT EXISTS relay_reputation (
                 fingerprint   TEXT PRIMARY KEY,
                 score         REAL    NOT NULL DEFAULT 0.0,
@@ -86,7 +99,7 @@ impl ReputationStore {
         asn:     Option<u32>,
         country: Option<&str>,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.db();
         let old: Option<f64> = conn
             .query_row(
                 "SELECT score FROM relay_reputation WHERE fingerprint=?1",
@@ -125,7 +138,7 @@ impl ReputationStore {
                 flag
             );
         }
-        let conn  = self.conn.lock().unwrap();
+        let conn  = self.db();
         // Read current flags, add only if not already present
         let current: Option<String> = conn
             .query_row(
@@ -167,7 +180,7 @@ impl ReputationStore {
 
     /// Return all relays whose reputation score is at or above `threshold`, ordered by score descending.
     pub fn suspicious_relays(&self, threshold: f64) -> Result<Vec<RelayRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.db();
         let mut stmt = conn.prepare(
             "SELECT fingerprint,score,seen_circuits,last_seen,flags,asn,country \
              FROM relay_reputation WHERE score>=?1 ORDER BY score DESC",
@@ -193,7 +206,7 @@ impl ReputationStore {
 
     /// Persist a `ThreatEvent` and prune the table to at most [`MAX_STORED_EVENTS`] rows.
     pub fn store_event(&self, evt: &ThreatEvent) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.db();
         conn.execute(
             "INSERT OR IGNORE INTO threat_events(id,timestamp,level,kind,message,anomaly_score) \
              VALUES(?1,?2,?3,?4,?5,?6)",
@@ -217,7 +230,7 @@ impl ReputationStore {
 
     /// Return up to `limit` most-recent events ordered by timestamp descending.
     pub fn recent_events(&self, limit: usize) -> Result<Vec<StoredEvent>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.db();
         let mut stmt = conn.prepare(
             "SELECT id,timestamp,level,message,anomaly_score \
              FROM threat_events ORDER BY timestamp DESC LIMIT ?1",
@@ -245,7 +258,7 @@ impl ReputationStore {
         reason:  &str,
         expires: Option<DateTime<Utc>>,
     ) -> Result<()> {
-        self.conn.lock().unwrap().execute(
+        self.db().execute(
             "INSERT OR REPLACE INTO blocked_ips(ip,blocked_at,reason,expires_at) \
              VALUES(?1,?2,?3,?4)",
             params![
@@ -261,7 +274,7 @@ impl ReputationStore {
 
     /// Remove `ip` from the blocklist. No-op if not present.
     pub fn unblock_ip(&self, ip: &str) -> Result<()> {
-        let n = self.conn.lock().unwrap().execute(
+        let n = self.db().execute(
             "DELETE FROM blocked_ips WHERE ip=?1",
             params![ip],
         )?;
@@ -288,7 +301,7 @@ impl ReputationStore {
 
     /// Delete all expired blocklist entries and return the number of rows removed.
     pub fn prune_expired_blocks(&self) -> Result<usize> {
-        Ok(self.conn.lock().unwrap().execute(
+        Ok(self.db().execute(
             "DELETE FROM blocked_ips WHERE expires_at IS NOT NULL AND expires_at < ?1",
             params![Utc::now().to_rfc3339()],
         )?)

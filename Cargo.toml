@@ -1,6 +1,6 @@
 [package]
 name        = "artishield"
-version     = "0.1.0"
+version     = "0.2.0"
 edition     = "2021"
 description = "Threat monitor & mitigation for arti (Tor Rust client)"
 license     = "MIT OR Apache-2.0"
@@ -78,9 +78,20 @@ chrono    = { version = "0.4", features = ["serde"] }
 uuid      = { version = "1",   features = ["v4", "serde"] }
 clap      = { version = "4",   features = ["derive"] }
 
-# ── Bevy render integration (optional) ────────────────────────────────────────
-# bevy_pbr / bevy_core_pipeline are pulled in transitively when needed.
-bevy = { version = "0.11", default-features = false, features = ["bevy_render", "bevy_core_pipeline"], optional = true }
+# ── Bevy render + native app (optional) ───────────────────────────────────────
+# bevy-plugin:  render node only (no window) — fast compile
+# bevy-ui:      full native app with window, PBR, gizmos, egui
+bevy = { version = "0.11", default-features = false, features = [
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_pbr",
+    "bevy_winit",
+    "bevy_gizmos",
+    "bevy_text",
+    "default_font",
+    "tonemapping_luts",
+    "x11",
+], optional = true }
 
 # bevy_egui 0.21.x targets Bevy 0.11
 bevy_egui = { version = "0.21", optional = true }

@@ -17,6 +17,10 @@ pub struct ShieldConfig {
     pub geoip_db: Option<PathBuf>,
     /// Log level in `RUST_LOG` syntax (default: `artishield=info,warn`).
     #[serde(default = "default_log")]   pub log_level:  String,
+    /// Optional Bearer token for write API endpoints (POST / DELETE).
+    /// If unset, write endpoints are restricted to loopback (127.0.0.1 / ::1).
+    /// Set a strong random value in production: `openssl rand -hex 32`
+    pub api_token: Option<String>,
     /// Detector thresholds and tuning parameters.
     #[serde(default)]                   pub detectors:  DetectorConfig,
     /// Mitigation actions to take on detected threats.
@@ -30,6 +34,7 @@ impl Default for ShieldConfig {
             db_path:     default_db(),
             geoip_db:    None,
             log_level:   default_log(),
+            api_token:   None,
             detectors:   DetectorConfig::default(),
             mitigations: MitigationConfig::default(),
         }

@@ -104,8 +104,10 @@ sudo install -m 755 target/release/artishield /usr/local/bin/artishield
 
 ```bash
 sudo mkdir -p /etc/artishield
-sudo cp artishield.toml /etc/artishield/artishield.toml
+sudo cp artishield.toml.example /etc/artishield/artishield.toml
 sudo chmod 640 /etc/artishield/artishield.toml
+# Pfade und Einstellungen anpassen:
+sudo nano /etc/artishield/artishield.toml
 ```
 
 ### 5. Datenverzeichnis anlegen
@@ -167,16 +169,27 @@ nano .env
 GRAFANA_ADMIN_PASSWORD=sicheres-passwort-hier
 ```
 
-### 2. Stack starten
+### 2. (Optional) Eigene Konfiguration verwenden
+
+Das Docker-Image enthält bereits eine funktionsfähige Standardkonfiguration.
+Für individuelle Anpassungen:
 
 ```bash
-docker compose -f deploy/docker-compose.yml up -d
+cp artishield.toml.example artishield.toml
+nano artishield.toml
+# Danach in docker-compose.yml das Volume-Mount für artishield.toml einkommentieren.
 ```
 
-### 3. Status prüfen
+### 3. Stack starten
 
 ```bash
-docker compose -f deploy/docker-compose.yml ps
+docker compose up -d
+```
+
+### 4. Status prüfen
+
+```bash
+docker compose ps
 ```
 
 ### Erreichbare Dienste
@@ -190,13 +203,13 @@ docker compose -f deploy/docker-compose.yml ps
 ### Stack stoppen
 
 ```bash
-docker compose -f deploy/docker-compose.yml down
+docker compose down
 ```
 
 ### Logs anzeigen
 
 ```bash
-docker compose -f deploy/docker-compose.yml logs -f artishield
+docker compose logs -f artishield
 ```
 
 ---
@@ -222,7 +235,9 @@ sudo chmod 750 /var/lib/artishield
 ```bash
 sudo install -m 755 target/release/artishield /usr/local/bin/artishield
 sudo install -m 640 -o root -g artishield \
-    artishield.toml /etc/artishield/artishield.toml
+    artishield.toml.example /etc/artishield/artishield.toml
+# Konfiguration anpassen:
+sudo nano /etc/artishield/artishield.toml
 ```
 
 ### 4. Service-Datei installieren
@@ -455,8 +470,8 @@ sudo systemctl restart artishield
 ### Docker-Update
 
 ```bash
-docker compose -f deploy/docker-compose.yml pull
-docker compose -f deploy/docker-compose.yml up -d --build artishield
+docker compose pull
+docker compose up -d --build artishield
 ```
 
 > Die SQLite-Datenbank ist abwärtskompatibel — kein Datenverlust beim Upgrade.
@@ -480,6 +495,6 @@ sudo userdel artishield
 ### Docker
 
 ```bash
-docker compose -f deploy/docker-compose.yml down -v   # -v löscht auch Volumes
+docker compose down -v   # -v löscht auch Volumes
 docker rmi artishield:latest
 ```
