@@ -5,15 +5,16 @@
 1. [Voraussetzungen](#voraussetzungen)
 2. [Schnellstart](#schnellstart)
 3. [Installation aus dem Quellcode](#installation-aus-dem-quellcode)
-4. [Docker](#docker)
-5. [Docker Compose (empfohlen für Produktion)](#docker-compose)
-6. [systemd-Service](#systemd-service)
-7. [Konfiguration](#konfiguration)
-8. [GeoIP-Datenbank (optional)](#geoip-datenbank-optional)
-9. [arti-Integration](#arti-integration)
-10. [Verifizierung](#verifizierung)
-11. [Upgrade](#upgrade)
-12. [Deinstallation](#deinstallation)
+4. [Native 3D Globe App](#native-3d-globe-app)
+5. [Docker](#docker)
+6. [Docker Compose (empfohlen für Produktion)](#docker-compose)
+7. [systemd-Service](#systemd-service)
+8. [Konfiguration](#konfiguration)
+9. [GeoIP-Datenbank (optional)](#geoip-datenbank-optional)
+10. [arti-Integration](#arti-integration)
+11. [Verifizierung](#verifizierung)
+12. [Upgrade](#upgrade)
+13. [Deinstallation](#deinstallation)
 
 ---
 
@@ -80,6 +81,15 @@ cd artishield
 cargo build --release
 ```
 
+**Mit nativer 3D Globe App** (Bevy-UI, benötigt X11/Wayland-Dev-Libs):
+
+```bash
+# Linux: X11 + Audio-Dev-Pakete installieren
+sudo apt install -y libx11-dev libxi-dev libxcursor-dev libxrandr-dev \
+                    libudev-dev libasound2-dev
+cargo build --release --features bevy-ui
+```
+
 **Mit voller arti-Integration** (Sybil-, Guard- und HS-Detektor aktiv):
 
 ```bash
@@ -120,6 +130,80 @@ sudo mkdir -p /var/lib/artishield
 
 ```bash
 artishield --config /etc/artishield/artishield.toml
+```
+
+---
+
+## Native 3D Globe App
+
+Die native Globe-App visualisiert Angriffe in Echtzeit als animierte Bézier-Bögen auf einem rotierenden 3D-Globus. Sie benötigt das Feature `bevy-ui` und einen lokalen Display-Server (X11 oder Wayland).
+
+### Voraussetzungen
+
+```bash
+# Debian/Ubuntu
+sudo apt install -y \
+  libx11-dev libxi-dev libxcursor-dev libxrandr-dev \
+  libudev-dev libasound2-dev libgl1
+
+# Fedora/RHEL
+sudo dnf install -y \
+  libX11-devel libXi-devel libXcursor-devel libXrandr-devel \
+  systemd-devel alsa-lib-devel mesa-libGL
+```
+
+### Build
+
+```bash
+cargo build --release --features bevy-ui
+```
+
+### Starten
+
+**Demo-Modus** (kein laufendes arti benötigt — synthetische Events):
+
+```bash
+cargo run --release --features bevy-ui -- native --no-monitor
+# oder nach Installation:
+artishield native --no-monitor
+```
+
+**Live-Modus** (verbindet sich mit laufendem arti via SOCKS5):
+
+```bash
+artishield --config artishield.toml native
+```
+
+### Steuerung
+
+| Eingabe | Aktion |
+|---------|--------|
+| Linke Maustaste + Ziehen | Globus rotieren |
+| Mausrad | Zoom ein/aus |
+| Fenster schließen / Ctrl-C | Beenden |
+
+### Farbcodierung der Angriffspfeile
+
+| Farbe | Severity |
+|-------|----------|
+| Rot | Critical |
+| Orange | High |
+| Gelb | Medium |
+| Hellblau | Low |
+| Grün | Info |
+
+### Docker-Container (X11)
+
+```bash
+docker build -f Dockerfile.native -t artishield-native .
+
+# X11-Zugriff erlauben
+xhost +local:docker
+
+docker run --rm -it \
+  -e DISPLAY=$DISPLAY \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  artishield-native
 ```
 
 ---
