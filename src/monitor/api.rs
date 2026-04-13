@@ -20,10 +20,8 @@
 //! If `api_token` is **not** set, write endpoints are restricted to loopback
 //! (127.0.0.1 / ::1) only — safe for local installs without extra config.
 
-use crate::{
-    event::ThreatEvent,
-    storage::ReputationStore,
-};
+use crate::{event::ThreatEvent, storage::ReputationStore};
+use axum::http::Method;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -38,11 +36,13 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     net::SocketAddr,
-    sync::{atomic::{AtomicUsize, Ordering}, Arc, Mutex as StdMutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex as StdMutex,
+    },
     time::Instant,
 };
 use tokio::sync::{broadcast, RwLock};
-use axum::http::Method;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{debug, info};
 
@@ -59,18 +59,18 @@ const WRITE_RATE_LIMIT: u32 = 60;
 #[derive(Clone)]
 pub struct ApiState {
     /// Shared runtime state (metrics, recent events, arti status).
-    pub shared:          Arc<RwLock<SharedState>>,
+    pub shared: Arc<RwLock<SharedState>>,
     /// Reputation store for relay and IP data.
-    pub store:           Arc<ReputationStore>,
+    pub store: Arc<ReputationStore>,
     /// Event bus sender — WebSocket clients subscribe to its receiver.
-    pub event_tx:        broadcast::Sender<ThreatEvent>,
+    pub event_tx: broadcast::Sender<ThreatEvent>,
     /// Optional Bearer token required for write endpoints (POST/DELETE).
     /// `None` → restrict to loopback only.
-    pub api_token:       Option<String>,
+    pub api_token: Option<String>,
     /// Live WebSocket connection counter.
-    pub ws_connections:  Arc<AtomicUsize>,
+    pub ws_connections: Arc<AtomicUsize>,
     /// Per-IP write-endpoint rate limiter: IP → (count, window_start).
-    pub write_limiter:   Arc<StdMutex<HashMap<std::net::IpAddr, (u32, Instant)>>>,
+    pub write_limiter: Arc<StdMutex<HashMap<std::net::IpAddr, (u32, Instant)>>>,
 }
 
 // ── Auth helper ───────────────────────────────────────────────────────────────
@@ -96,7 +96,10 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 /// Returns `true` if the IP has not yet exceeded [`WRITE_RATE_LIMIT`] requests
@@ -126,21 +129,31 @@ async fn security_headers(
 ) -> axum::response::Response {
     let mut resp = next.run(req).await;
     let h = resp.headers_mut();
-    h.insert("X-Frame-Options",
-        axum::http::HeaderValue::from_static("DENY"));
-    h.insert("X-Content-Type-Options",
-        axum::http::HeaderValue::from_static("nosniff"));
-    h.insert("Referrer-Policy",
-        axum::http::HeaderValue::from_static("no-referrer"));
-    h.insert("X-Permitted-Cross-Domain-Policies",
-        axum::http::HeaderValue::from_static("none"));
-    h.insert("Content-Security-Policy",
+    h.insert(
+        "X-Frame-Options",
+        axum::http::HeaderValue::from_static("DENY"),
+    );
+    h.insert(
+        "X-Content-Type-Options",
+        axum::http::HeaderValue::from_static("nosniff"),
+    );
+    h.insert(
+        "Referrer-Policy",
+        axum::http::HeaderValue::from_static("no-referrer"),
+    );
+    h.insert(
+        "X-Permitted-Cross-Domain-Policies",
+        axum::http::HeaderValue::from_static("none"),
+    );
+    h.insert(
+        "Content-Security-Policy",
         axum::http::HeaderValue::from_static(
             "default-src 'self'; \
              script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; \
              connect-src 'self' ws: wss:; \
-             style-src 'unsafe-inline'"
-        ));
+             style-src 'unsafe-inline'",
+        ),
+    );
     resp
 }
 
@@ -156,15 +169,15 @@ pub async fn serve(state: ApiState, addr: SocketAddr) -> anyhow::Result<()> {
         .allow_headers(Any);
 
     let app = Router::new()
-        .route("/",                      get(root))
-        .route("/health",                get(health))
-        .route("/api/metrics",           get(get_metrics))
-        .route("/api/events",            get(get_events))
+        .route("/", get(root))
+        .route("/health", get(health))
+        .route("/api/metrics", get(get_metrics))
+        .route("/api/events", get(get_events))
         .route("/api/relays/suspicious", get(get_suspicious))
-        .route("/api/relay/:fp/flag",    post(flag_relay))
-        .route("/api/ip/:ip/unblock",    delete(unblock_ip))
-        .route("/metrics",               get(prometheus_metrics))
-        .route("/ws",                    get(ws_handler))
+        .route("/api/relay/:fp/flag", post(flag_relay))
+        .route("/api/ip/:ip/unblock", delete(unblock_ip))
+        .route("/metrics", get(prometheus_metrics))
+        .route("/ws", get(ws_handler))
         .layer(cors)
         .layer(axum::middleware::from_fn(security_headers))
         .with_state(state);
@@ -181,7 +194,9 @@ pub async fn serve(state: ApiState, addr: SocketAddr) -> anyhow::Result<()> {
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-async fn health() -> &'static str { "ok" }
+async fn health() -> &'static str {
+    "ok"
+}
 
 async fn root() -> impl IntoResponse {
     (
@@ -211,13 +226,13 @@ async fn get_events(State(s): State<ApiState>) -> Json<Vec<EventDto>> {
             .iter()
             .take(100)
             .map(|e| EventDto {
-                id:            e.id.to_string(),
-                timestamp:     e.timestamp.to_rfc3339(),
-                level:         e.level.to_string(),
-                message:       e.message.clone(),
+                id: e.id.to_string(),
+                timestamp: e.timestamp.to_rfc3339(),
+                level: e.level.to_string(),
+                message: e.message.clone(),
                 anomaly_score: e.anomaly_score,
-                mitigations:   e.suggested_mitigations.clone(),
-                kind:          serde_json::to_value(&e.kind).unwrap_or_default(),
+                mitigations: e.suggested_mitigations.clone(),
+                kind: serde_json::to_value(&e.kind).unwrap_or_default(),
             })
             .collect(),
     )
@@ -252,34 +267,42 @@ struct FlagBody {
 }
 
 async fn flag_relay(
-    State(s):              State<ApiState>,
-    ConnectInfo(peer):     ConnectInfo<SocketAddr>,
-    headers:               HeaderMap,
-    Path(fp):              Path<String>,
-    Json(body):            Json<FlagBody>,
+    State(s): State<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Path(fp): Path<String>,
+    Json(body): Json<FlagBody>,
 ) -> impl IntoResponse {
     if !is_authorised(&s, &peer, &headers) {
-        return (StatusCode::UNAUTHORIZED,
-                "Unauthorized — set Authorization: Bearer <token> or use loopback")
+        return (
+            StatusCode::UNAUTHORIZED,
+            "Unauthorized — set Authorization: Bearer <token> or use loopback",
+        )
             .into_response();
     }
     if !check_write_rate(&s.write_limiter, peer.ip()) {
         return (StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded").into_response();
     }
-    if body.flag.is_empty() || body.flag.len() > 64
-        || body.flag.contains(',') || body.flag.contains(char::is_whitespace)
+    if body.flag.is_empty()
+        || body.flag.len() > 64
+        || body.flag.contains(',')
+        || body.flag.contains(char::is_whitespace)
     {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
             "flag must be 1–64 characters with no commas or whitespace",
-        ).into_response();
+        )
+            .into_response();
     }
     if !s.store.relay_exists(&fp) {
-        return (StatusCode::NOT_FOUND, format!("relay {fp} not in reputation store"))
+        return (
+            StatusCode::NOT_FOUND,
+            format!("relay {fp} not in reputation store"),
+        )
             .into_response();
     }
     match s.store.add_flag(&fp, &body.flag) {
-        Ok(_)  => {
+        Ok(_) => {
             info!(peer = %peer, fp = %fp, flag = %body.flag, "Audit: relay flagged via API");
             (StatusCode::OK, "flagged").into_response()
         }
@@ -288,21 +311,23 @@ async fn flag_relay(
 }
 
 async fn unblock_ip(
-    State(s):          State<ApiState>,
+    State(s): State<ApiState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers:           HeaderMap,
-    Path(ip):          Path<String>,
+    headers: HeaderMap,
+    Path(ip): Path<String>,
 ) -> impl IntoResponse {
     if !is_authorised(&s, &peer, &headers) {
-        return (StatusCode::UNAUTHORIZED,
-                "Unauthorized — set Authorization: Bearer <token> or use loopback")
+        return (
+            StatusCode::UNAUTHORIZED,
+            "Unauthorized — set Authorization: Bearer <token> or use loopback",
+        )
             .into_response();
     }
     if !check_write_rate(&s.write_limiter, peer.ip()) {
         return (StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded").into_response();
     }
     match s.store.unblock_ip(&ip) {
-        Ok(_)  => {
+        Ok(_) => {
             info!(peer = %peer, ip = %ip, "Audit: IP unblocked via API");
             (StatusCode::OK, format!("{ip} unblocked")).into_response()
         }
@@ -311,9 +336,9 @@ async fn unblock_ip(
 }
 
 async fn prometheus_metrics(
-    State(s):          State<ApiState>,
+    State(s): State<ApiState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers:           HeaderMap,
+    headers: HeaderMap,
 ) -> Response {
     // Require Bearer auth if a token is configured (Prometheus scraper should send it).
     if s.api_token.is_some() && !is_authorised(&s, &peer, &headers) {
@@ -322,22 +347,30 @@ async fn prometheus_metrics(
     let body = metrics::render(&s.shared, &s.store).await;
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
         body,
-    ).into_response()
+    )
+        .into_response()
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(s): State<ApiState>) -> Response {
     if s.ws_connections.load(Ordering::Relaxed) >= MAX_WS_CONNECTIONS {
-        return (StatusCode::SERVICE_UNAVAILABLE, "Too many WebSocket connections").into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Too many WebSocket connections",
+        )
+            .into_response();
     }
     ws.on_upgrade(move |socket| ws_loop(socket, s.event_tx.subscribe(), s.ws_connections))
 }
 
 async fn ws_loop(
-    mut socket:  WebSocket,
-    mut rx:      broadcast::Receiver<ThreatEvent>,
-    counter:     Arc<AtomicUsize>,
+    mut socket: WebSocket,
+    mut rx: broadcast::Receiver<ThreatEvent>,
+    counter: Arc<AtomicUsize>,
 ) {
     let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
     info!(connections = n, "WS client connected");
@@ -368,13 +401,13 @@ async fn ws_loop(
 
 #[derive(Serialize)]
 struct EventDto {
-    id:            String,
-    timestamp:     String,
-    level:         String,
-    message:       String,
+    id: String,
+    timestamp: String,
+    level: String,
+    message: String,
     anomaly_score: f64,
-    mitigations:   Vec<String>,
-    kind:          serde_json::Value,
+    mitigations: Vec<String>,
+    kind: serde_json::Value,
 }
 
 // ── Dashboard HTML ────────────────────────────────────────────────────────────

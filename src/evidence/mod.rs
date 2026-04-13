@@ -35,10 +35,7 @@ use hmac::{Hmac, Mac};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{
-    path::Path,
-    sync::Mutex,
-};
+use std::{path::Path, sync::Mutex};
 use uuid::Uuid;
 
 use crate::event::{ThreatEvent, ThreatLevel};
@@ -54,41 +51,41 @@ type HmacSha256 = Hmac<sha2::Sha256>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ioc {
     /// IOC type: `"fingerprint"` | `"ip"` | `"asn"` | `"prefix"` | `"nickname"`.
-    pub kind:       String,
+    pub kind: String,
     /// The indicator value (e.g. a fingerprint hex string or IP address).
-    pub value:      String,
+    pub value: String,
     /// Human-readable description.
-    pub context:    String,
+    pub context: String,
     /// UTC timestamp of first observation.
     pub first_seen: DateTime<Utc>,
     /// Threat severity at time of observation.
-    pub severity:   String,
+    pub severity: String,
 }
 
 /// A single entry in the ordered investigation timeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelineEntry {
     /// UTC timestamp of the event.
-    pub ts:          DateTime<Utc>,
+    pub ts: DateTime<Utc>,
     /// Short category: `"threat"` | `"osint"` | `"countermeasure"` | `"note"`.
-    pub kind:        String,
+    pub kind: String,
     /// One-line description.
     pub description: String,
     /// UUIDs of related [`ThreatEvent`]s.
-    pub event_ids:   Vec<String>,
+    pub event_ids: Vec<String>,
 }
 
 /// Information about the host that generated this report.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemInfo {
     /// Hostname, if available.
-    pub hostname:          Option<String>,
+    pub hostname: Option<String>,
     /// OS family string (e.g. `"Linux"`).
-    pub os:                String,
+    pub os: String,
     /// ArtiShield version.
     pub artishield_version: String,
     /// Evidence report format version.
-    pub format_version:    String,
+    pub format_version: String,
 }
 
 /// Classification level for the report (choose based on sensitivity).
@@ -108,10 +105,10 @@ pub enum Classification {
 impl std::fmt::Display for Classification {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::Internal      => "INTERNAL",
-            Self::Restricted    => "RESTRICTED",
-            Self::Confidential  => "CONFIDENTIAL",
-            Self::Unclassified  => "UNCLASSIFIED",
+            Self::Internal => "INTERNAL",
+            Self::Restricted => "RESTRICTED",
+            Self::Confidential => "CONFIDENTIAL",
+            Self::Unclassified => "UNCLASSIFIED",
         })
     }
 }
@@ -125,45 +122,45 @@ impl std::fmt::Display for Classification {
 pub struct EvidenceReport {
     // ── Identity ──────────────────────────────────────────────────────────────
     /// Unique report ID (UUIDv4).
-    pub id:             Uuid,
+    pub id: Uuid,
     /// UTC creation timestamp.
-    pub created_at:     DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
     /// Tool + version string.
-    pub generator:      String,
+    pub generator: String,
 
     // ── Hash chain ────────────────────────────────────────────────────────────
     /// SHA-256 hex of the previous report in this evidence store.
-    pub prev_hash:      Option<String>,
+    pub prev_hash: Option<String>,
     /// SHA-256 hex of the canonical JSON of this report (with hash/hmac = "").
-    pub content_hash:   String,
+    pub content_hash: String,
     /// HMAC-SHA256(content_hash, local_signing_key).
-    pub hmac:           String,
+    pub hmac: String,
 
     // ── Case metadata ─────────────────────────────────────────────────────────
     /// Optional case / incident reference number.
-    pub case_id:        Option<String>,
+    pub case_id: Option<String>,
     /// Name of the investigator creating this report.
-    pub investigator:   Option<String>,
+    pub investigator: Option<String>,
     /// Classification level.
     pub classification: Classification,
     /// Free-text notes for chain-of-custody documentation.
-    pub notes:          String,
+    pub notes: String,
 
     // ── Evidence payload ──────────────────────────────────────────────────────
     /// Serialised [`ThreatEvent`]s included in this report.
-    pub threat_events:  Vec<serde_json::Value>,
+    pub threat_events: Vec<serde_json::Value>,
     /// Serialised relay OSINT profiles.
     pub relay_profiles: Vec<serde_json::Value>,
     /// Deduplicated list of Indicators of Compromise.
-    pub iocs:           Vec<Ioc>,
+    pub iocs: Vec<Ioc>,
     /// Ordered investigation timeline.
-    pub timeline:       Vec<TimelineEntry>,
+    pub timeline: Vec<TimelineEntry>,
     /// Countermeasure texts that were generated for this report.
     pub countermeasures: Vec<String>,
 
     // ── System context ────────────────────────────────────────────────────────
     /// Information about the host that created this report.
-    pub system_info:    SystemInfo,
+    pub system_info: SystemInfo,
 }
 
 impl EvidenceReport {
@@ -193,10 +190,13 @@ impl EvidenceReport {
 
     /// Highest severity across all included threat events.
     pub fn max_severity(&self) -> Option<ThreatLevel> {
-        self.threat_events.iter().filter_map(|v| {
-            v.get("level")
-                .and_then(|l| serde_json::from_value(l.clone()).ok())
-        }).max()
+        self.threat_events
+            .iter()
+            .filter_map(|v| {
+                v.get("level")
+                    .and_then(|l| serde_json::from_value(l.clone()).ok())
+            })
+            .max()
     }
 }
 
@@ -205,65 +205,76 @@ impl EvidenceReport {
 /// Fluent builder for [`EvidenceReport`].
 #[derive(Default)]
 pub struct ReportBuilder {
-    case_id:        Option<String>,
-    investigator:   Option<String>,
+    case_id: Option<String>,
+    investigator: Option<String>,
     classification: Classification,
-    notes:          String,
-    events:         Vec<ThreatEvent>,
+    notes: String,
+    events: Vec<ThreatEvent>,
     #[cfg(feature = "bevy-ui")]
-    relays:         Vec<RelayProfile>,
+    relays: Vec<RelayProfile>,
     countermeasures: Vec<String>,
     timeline_notes: Vec<String>,
 }
 
 impl ReportBuilder {
     /// Create a new builder with default settings.
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Set an optional case / incident reference number.
     pub fn case_id(mut self, id: impl Into<String>) -> Self {
-        self.case_id = Some(id.into()); self
+        self.case_id = Some(id.into());
+        self
     }
 
     /// Set the investigator name.
     pub fn investigator(mut self, name: impl Into<String>) -> Self {
-        self.investigator = Some(name.into()); self
+        self.investigator = Some(name.into());
+        self
     }
 
     /// Set the classification level.
     pub fn classification(mut self, c: Classification) -> Self {
-        self.classification = c; self
+        self.classification = c;
+        self
     }
 
     /// Set free-text notes.
     pub fn notes(mut self, n: impl Into<String>) -> Self {
-        self.notes = n.into(); self
+        self.notes = n.into();
+        self
     }
 
     /// Add threat events to include.
     pub fn events(mut self, evts: impl IntoIterator<Item = ThreatEvent>) -> Self {
-        self.events.extend(evts); self
+        self.events.extend(evts);
+        self
     }
 
     /// Add a single threat event.
     pub fn event(mut self, evt: ThreatEvent) -> Self {
-        self.events.push(evt); self
+        self.events.push(evt);
+        self
     }
 
     /// Add relay OSINT profiles.
     #[cfg(feature = "bevy-ui")]
     pub fn relays(mut self, profiles: impl IntoIterator<Item = RelayProfile>) -> Self {
-        self.relays.extend(profiles); self
+        self.relays.extend(profiles);
+        self
     }
 
     /// Add a countermeasure text block.
     pub fn countermeasure(mut self, text: impl Into<String>) -> Self {
-        self.countermeasures.push(text.into()); self
+        self.countermeasures.push(text.into());
+        self
     }
 
     /// Add a free-text timeline note.
     pub fn note(mut self, n: impl Into<String>) -> Self {
-        self.timeline_notes.push(n.into()); self
+        self.timeline_notes.push(n.into());
+        self
     }
 
     /// Finalise and sign the report using the store's signing key.
@@ -272,12 +283,16 @@ impl ReportBuilder {
         let prev_hash = store.last_hash()?;
 
         // Serialise events and relays
-        let threat_events: Vec<serde_json::Value> = self.events.iter()
+        let threat_events: Vec<serde_json::Value> = self
+            .events
+            .iter()
             .map(|e| serde_json::to_value(e).unwrap_or_default())
             .collect();
 
         #[cfg(feature = "bevy-ui")]
-        let relay_profiles: Vec<serde_json::Value> = self.relays.iter()
+        let relay_profiles: Vec<serde_json::Value> = self
+            .relays
+            .iter()
             .map(|r| serde_json::to_value(r).unwrap_or_default())
             .collect();
         #[cfg(not(feature = "bevy-ui"))]
@@ -287,41 +302,45 @@ impl ReportBuilder {
         let iocs = extract_iocs(&self.events);
 
         // Build timeline
-        let mut timeline: Vec<TimelineEntry> = self.events.iter().map(|e| TimelineEntry {
-            ts:          e.timestamp,
-            kind:        "threat".into(),
-            description: e.message.clone(),
-            event_ids:   vec![e.id.to_string()],
-        }).collect();
+        let mut timeline: Vec<TimelineEntry> = self
+            .events
+            .iter()
+            .map(|e| TimelineEntry {
+                ts: e.timestamp,
+                kind: "threat".into(),
+                description: e.message.clone(),
+                event_ids: vec![e.id.to_string()],
+            })
+            .collect();
         timeline.sort_by_key(|t| t.ts);
         for note in &self.timeline_notes {
             timeline.push(TimelineEntry {
-                ts:          now,
-                kind:        "note".into(),
+                ts: now,
+                kind: "note".into(),
                 description: note.clone(),
-                event_ids:   vec![],
+                event_ids: vec![],
             });
         }
 
         let system_info = SystemInfo {
-            hostname:           hostname(),
-            os:                 std::env::consts::OS.to_owned(),
+            hostname: hostname(),
+            os: std::env::consts::OS.to_owned(),
             artishield_version: env!("CARGO_PKG_VERSION").to_owned(),
-            format_version:     "1".to_owned(),
+            format_version: "1".to_owned(),
         };
 
         // Assemble report with empty hash/hmac for hashing
         let mut report = EvidenceReport {
-            id:             Uuid::new_v4(),
-            created_at:     now,
-            generator:      format!("ArtiShield/{}", env!("CARGO_PKG_VERSION")),
+            id: Uuid::new_v4(),
+            created_at: now,
+            generator: format!("ArtiShield/{}", env!("CARGO_PKG_VERSION")),
             prev_hash,
-            content_hash:   String::new(),
-            hmac:           String::new(),
-            case_id:        self.case_id,
-            investigator:   self.investigator,
+            content_hash: String::new(),
+            hmac: String::new(),
+            case_id: self.case_id,
+            investigator: self.investigator,
             classification: self.classification,
-            notes:          self.notes,
+            notes: self.notes,
             threat_events,
             relay_profiles,
             iocs,
@@ -331,15 +350,13 @@ impl ReportBuilder {
         };
 
         // Compute content hash
-        let canonical = serde_json::to_string(&report)
-            .context("serialize report for hashing")?;
+        let canonical = serde_json::to_string(&report).context("serialize report for hashing")?;
         let hash_bytes = Sha256::digest(canonical.as_bytes());
         report.content_hash = hex::encode(hash_bytes);
 
         // HMAC-sign the hash
         let key = store.signing_key();
-        let mut mac = HmacSha256::new_from_slice(key)
-            .context("create HMAC")?;
+        let mut mac = HmacSha256::new_from_slice(key).context("create HMAC")?;
         mac.update(report.content_hash.as_bytes());
         report.hmac = hex::encode(mac.finalize().into_bytes());
 
@@ -353,7 +370,7 @@ impl ReportBuilder {
 ///
 /// Also manages the local HMAC signing key.
 pub struct EvidenceStore {
-    conn:        Mutex<Connection>,
+    conn: Mutex<Connection>,
     signing_key: Vec<u8>,
 }
 
@@ -364,8 +381,7 @@ impl EvidenceStore {
     /// * `key_path` — path to the HMAC signing key file (`evidence.key`)
     pub fn open(db_path: &Path, key_path: &Path) -> Result<Self> {
         let signing_key = load_or_create_key(key_path)?;
-        let conn = Connection::open(db_path)
-            .context("open evidence DB")?;
+        let conn = Connection::open(db_path).context("open evidence DB")?;
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA foreign_keys=ON;
@@ -379,7 +395,10 @@ impl EvidenceStore {
              );",
         )?;
         tracing::info!(?db_path, "EvidenceStore opened");
-        Ok(Self { conn: Mutex::new(conn), signing_key })
+        Ok(Self {
+            conn: Mutex::new(conn),
+            signing_key,
+        })
     }
 
     /// Return a reference to the local signing key.
@@ -425,9 +444,8 @@ impl EvidenceStore {
     /// Load all stored reports in chronological order.
     pub fn load_all(&self) -> Result<Vec<EvidenceReport>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare(
-            "SELECT payload FROM evidence_reports ORDER BY created_at ASC",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT payload FROM evidence_reports ORDER BY created_at ASC")?;
         let reports = stmt
             .query_map([], |row| row.get::<_, String>(0))?
             .filter_map(|r| r.ok())
@@ -447,7 +465,10 @@ impl EvidenceStore {
             if r.prev_hash != prev {
                 anyhow::bail!(
                     "Hash chain broken at report {} (id={}): expected prev={:?} got {:?}",
-                    i, r.id, prev, r.prev_hash
+                    i,
+                    r.id,
+                    prev,
+                    r.prev_hash
                 );
             }
             if !r.verify(&self.signing_key) {
@@ -464,16 +485,19 @@ impl EvidenceStore {
         let mut stmt = conn.prepare(
             "SELECT id, created_at, case_id, content_hash FROM evidence_reports ORDER BY created_at DESC",
         )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(ReportSummary {
-                id:          row.get(0)?,
-                created_at:  row.get(1)?,
-                case_id:     row.get(2)?,
-                hash_prefix: row.get::<_, String>(3).map(|h| h[..16.min(h.len())].to_owned())?,
-            })
-        })?
-        .filter_map(|r| r.ok())
-        .collect();
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ReportSummary {
+                    id: row.get(0)?,
+                    created_at: row.get(1)?,
+                    case_id: row.get(2)?,
+                    hash_prefix: row
+                        .get::<_, String>(3)
+                        .map(|h| h[..16.min(h.len())].to_owned())?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
         Ok(rows)
     }
 }
@@ -482,11 +506,11 @@ impl EvidenceStore {
 #[derive(Debug, Clone)]
 pub struct ReportSummary {
     /// Report UUID.
-    pub id:          String,
+    pub id: String,
     /// RFC 3339 creation timestamp.
-    pub created_at:  String,
+    pub created_at: String,
     /// Optional case ID.
-    pub case_id:     Option<String>,
+    pub case_id: Option<String>,
     /// First 16 hex chars of the content hash.
     pub hash_prefix: String,
 }
@@ -499,27 +523,82 @@ fn extract_iocs(events: &[ThreatEvent]) -> Vec<Ioc> {
     for evt in events {
         let sev = format!("{:?}", evt.level);
         match &evt.kind {
-            ThreatKind::SybilCluster { affected_fps, shared_asn, shared_prefix } => {
+            ThreatKind::SybilCluster {
+                affected_fps,
+                shared_asn,
+                shared_prefix,
+            } => {
                 for fp in affected_fps {
-                    push_ioc(&mut iocs, "fingerprint", fp, "Sybil cluster member", evt.timestamp, &sev);
+                    push_ioc(
+                        &mut iocs,
+                        "fingerprint",
+                        fp,
+                        "Sybil cluster member",
+                        evt.timestamp,
+                        &sev,
+                    );
                 }
                 if let Some(asn) = shared_asn {
-                    push_ioc(&mut iocs, "asn", &asn.to_string(), "Shared ASN in Sybil cluster", evt.timestamp, &sev);
+                    push_ioc(
+                        &mut iocs,
+                        "asn",
+                        &asn.to_string(),
+                        "Shared ASN in Sybil cluster",
+                        evt.timestamp,
+                        &sev,
+                    );
                 }
                 if let Some(pfx) = shared_prefix {
-                    push_ioc(&mut iocs, "prefix", pfx, "Shared /24 in Sybil cluster", evt.timestamp, &sev);
+                    push_ioc(
+                        &mut iocs,
+                        "prefix",
+                        pfx,
+                        "Shared /24 in Sybil cluster",
+                        evt.timestamp,
+                        &sev,
+                    );
                 }
             }
-            ThreatKind::GuardDiscovery { suspicious_fingerprints, .. } => {
+            ThreatKind::GuardDiscovery {
+                suspicious_fingerprints,
+                ..
+            } => {
                 for fp in suspicious_fingerprints {
-                    push_ioc(&mut iocs, "fingerprint", fp, "Suspicious guard relay", evt.timestamp, &sev);
+                    push_ioc(
+                        &mut iocs,
+                        "fingerprint",
+                        fp,
+                        "Suspicious guard relay",
+                        evt.timestamp,
+                        &sev,
+                    );
                 }
             }
-            ThreatKind::DenialOfService { source_relay: Some(fp), .. } => {
-                push_ioc(&mut iocs, "fingerprint", fp, "DoS source relay", evt.timestamp, &sev);
+            ThreatKind::DenialOfService {
+                source_relay: Some(fp),
+                ..
+            } => {
+                push_ioc(
+                    &mut iocs,
+                    "fingerprint",
+                    fp,
+                    "DoS source relay",
+                    evt.timestamp,
+                    &sev,
+                );
             }
-            ThreatKind::HsEnumeration { suspected_scanner: Some(ip), .. } => {
-                push_ioc(&mut iocs, "ip", &ip.to_string(), "HS enumeration scanner", evt.timestamp, &sev);
+            ThreatKind::HsEnumeration {
+                suspected_scanner: Some(ip),
+                ..
+            } => {
+                push_ioc(
+                    &mut iocs,
+                    "ip",
+                    &ip.to_string(),
+                    "HS enumeration scanner",
+                    evt.timestamp,
+                    &sev,
+                );
             }
             _ => {}
         }
@@ -532,11 +611,11 @@ fn extract_iocs(events: &[ThreatEvent]) -> Vec<Ioc> {
 
 fn push_ioc(iocs: &mut Vec<Ioc>, kind: &str, value: &str, ctx: &str, ts: DateTime<Utc>, sev: &str) {
     iocs.push(Ioc {
-        kind:       kind.to_owned(),
-        value:      value.to_owned(),
-        context:    ctx.to_owned(),
+        kind: kind.to_owned(),
+        value: value.to_owned(),
+        context: ctx.to_owned(),
         first_seen: ts,
-        severity:   sev.to_owned(),
+        severity: sev.to_owned(),
     });
 }
 
@@ -545,10 +624,8 @@ fn push_ioc(iocs: &mut Vec<Ioc>, kind: &str, value: &str, ctx: &str, ts: DateTim
 /// Load key from file, or generate and save a new one.
 fn load_or_create_key(path: &Path) -> Result<Vec<u8>> {
     if path.exists() {
-        let hex_str = std::fs::read_to_string(path)
-            .context("read signing key")?;
-        let key = hex::decode(hex_str.trim())
-            .context("decode signing key hex")?;
+        let hex_str = std::fs::read_to_string(path).context("read signing key")?;
+        let key = hex::decode(hex_str.trim()).context("decode signing key hex")?;
         return Ok(key);
     }
 
@@ -566,11 +643,9 @@ fn load_or_create_key(path: &Path) -> Result<Vec<u8>> {
     let hex_key = hex::encode(&key);
 
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .context("create key directory")?;
+        std::fs::create_dir_all(parent).context("create key directory")?;
     }
-    std::fs::write(path, &hex_key)
-        .context("write signing key")?;
+    std::fs::write(path, &hex_key).context("write signing key")?;
 
     tracing::info!(?path, "Generated new evidence signing key");
     Ok(key)
@@ -591,26 +666,26 @@ impl Serialize for crate::osint::relay::RelayProfile {
     fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let mut st = s.serialize_struct("RelayProfile", 20)?;
-        st.serialize_field("fingerprint",       &self.fingerprint)?;
-        st.serialize_field("nickname",          &self.nickname)?;
-        st.serialize_field("or_address",        &self.or_address)?;
-        st.serialize_field("ip",                &self.ip.map(|i| i.to_string()))?;
-        st.serialize_field("country",           &self.country)?;
-        st.serialize_field("asn",               &self.asn)?;
-        st.serialize_field("as_name",           &self.as_name)?;
-        st.serialize_field("flags",             &self.flags)?;
-        st.serialize_field("bandwidth_rate",    &self.bandwidth_rate)?;
-        st.serialize_field("uptime",            &self.uptime)?;
-        st.serialize_field("first_seen",        &self.first_seen)?;
-        st.serialize_field("last_seen",         &self.last_seen)?;
-        st.serialize_field("platform",          &self.platform)?;
-        st.serialize_field("contact",           &self.contact)?;
+        st.serialize_field("fingerprint", &self.fingerprint)?;
+        st.serialize_field("nickname", &self.nickname)?;
+        st.serialize_field("or_address", &self.or_address)?;
+        st.serialize_field("ip", &self.ip.map(|i| i.to_string()))?;
+        st.serialize_field("country", &self.country)?;
+        st.serialize_field("asn", &self.asn)?;
+        st.serialize_field("as_name", &self.as_name)?;
+        st.serialize_field("flags", &self.flags)?;
+        st.serialize_field("bandwidth_rate", &self.bandwidth_rate)?;
+        st.serialize_field("uptime", &self.uptime)?;
+        st.serialize_field("first_seen", &self.first_seen)?;
+        st.serialize_field("last_seen", &self.last_seen)?;
+        st.serialize_field("platform", &self.platform)?;
+        st.serialize_field("contact", &self.contact)?;
         st.serialize_field("guard_probability", &self.guard_probability)?;
-        st.serialize_field("exit_probability",  &self.exit_probability)?;
-        st.serialize_field("geo_country",       &self.geo_country)?;
-        st.serialize_field("geo_city",          &self.geo_city)?;
-        st.serialize_field("geo_isp",           &self.geo_isp)?;
-        st.serialize_field("abuse_contact",     &self.abuse_contact)?;
+        st.serialize_field("exit_probability", &self.exit_probability)?;
+        st.serialize_field("geo_country", &self.geo_country)?;
+        st.serialize_field("geo_city", &self.geo_city)?;
+        st.serialize_field("geo_isp", &self.geo_isp)?;
+        st.serialize_field("abuse_contact", &self.abuse_contact)?;
         st.end()
     }
 }
@@ -621,29 +696,43 @@ impl<'de> Deserialize<'de> for crate::osint::relay::RelayProfile {
         // Deserialize via an intermediate Value for simplicity
         let v = serde_json::Value::deserialize(d)?;
         Ok(crate::osint::relay::RelayProfile {
-            fingerprint:        v["fingerprint"].as_str().unwrap_or_default().to_owned(),
-            nickname:           v["nickname"].as_str().unwrap_or_default().to_owned(),
-            or_address:         v["or_address"].as_str().unwrap_or_default().to_owned(),
-            ip:                 v["ip"].as_str().and_then(|s| s.parse().ok()),
-            country:            v["country"].as_str().unwrap_or_default().to_owned(),
-            asn:                v["asn"].as_str().unwrap_or_default().to_owned(),
-            as_name:            v["as_name"].as_str().unwrap_or_default().to_owned(),
-            flags:              v["flags"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default(),
-            bandwidth_rate:     v["bandwidth_rate"].as_u64().unwrap_or_default(),
-            uptime:             v["uptime"].as_f64().unwrap_or_default(),
-            first_seen:         v["first_seen"].as_str().unwrap_or_default().to_owned(),
-            last_seen:          v["last_seen"].as_str().unwrap_or_default().to_owned(),
-            platform:           v["platform"].as_str().unwrap_or_default().to_owned(),
-            contact:            v["contact"].as_str().unwrap_or_default().to_owned(),
-            guard_probability:  v["guard_probability"].as_f64().unwrap_or_default(),
-            exit_probability:   v["exit_probability"].as_f64().unwrap_or_default(),
-            family_fingerprints: v["family_fingerprints"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default(),
-            geo_country:        v["geo_country"].as_str().unwrap_or_default().to_owned(),
-            geo_city:           v["geo_city"].as_str().unwrap_or_default().to_owned(),
-            geo_isp:            v["geo_isp"].as_str().unwrap_or_default().to_owned(),
-            geo_lat:            v["geo_lat"].as_f64().unwrap_or_default(),
-            geo_lon:            v["geo_lon"].as_f64().unwrap_or_default(),
-            abuse_contact:      v["abuse_contact"].as_str().map(str::to_owned),
+            fingerprint: v["fingerprint"].as_str().unwrap_or_default().to_owned(),
+            nickname: v["nickname"].as_str().unwrap_or_default().to_owned(),
+            or_address: v["or_address"].as_str().unwrap_or_default().to_owned(),
+            ip: v["ip"].as_str().and_then(|s| s.parse().ok()),
+            country: v["country"].as_str().unwrap_or_default().to_owned(),
+            asn: v["asn"].as_str().unwrap_or_default().to_owned(),
+            as_name: v["as_name"].as_str().unwrap_or_default().to_owned(),
+            flags: v["flags"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            bandwidth_rate: v["bandwidth_rate"].as_u64().unwrap_or_default(),
+            uptime: v["uptime"].as_f64().unwrap_or_default(),
+            first_seen: v["first_seen"].as_str().unwrap_or_default().to_owned(),
+            last_seen: v["last_seen"].as_str().unwrap_or_default().to_owned(),
+            platform: v["platform"].as_str().unwrap_or_default().to_owned(),
+            contact: v["contact"].as_str().unwrap_or_default().to_owned(),
+            guard_probability: v["guard_probability"].as_f64().unwrap_or_default(),
+            exit_probability: v["exit_probability"].as_f64().unwrap_or_default(),
+            family_fingerprints: v["family_fingerprints"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            geo_country: v["geo_country"].as_str().unwrap_or_default().to_owned(),
+            geo_city: v["geo_city"].as_str().unwrap_or_default().to_owned(),
+            geo_isp: v["geo_isp"].as_str().unwrap_or_default().to_owned(),
+            geo_lat: v["geo_lat"].as_f64().unwrap_or_default(),
+            geo_lon: v["geo_lon"].as_f64().unwrap_or_default(),
+            abuse_contact: v["abuse_contact"].as_str().map(str::to_owned),
         })
     }
 }

@@ -9,30 +9,31 @@ use super::{Classification, EvidenceReport, Ioc, TimelineEntry};
 
 /// Render `report` as a complete HTML document string.
 pub fn render(r: &EvidenceReport) -> String {
-    let severity_badge = r.max_severity()
+    let severity_badge = r
+        .max_severity()
         .map(|s| format!("{s:?}").to_uppercase())
         .unwrap_or_else(|| "INFO".into());
     let severity_color = match severity_badge.as_str() {
         "CRITICAL" => "#e53935",
-        "HIGH"     => "#fb8c00",
-        "MEDIUM"   => "#fdd835",
-        "LOW"      => "#1e88e5",
-        _          => "#43a047",
+        "HIGH" => "#fb8c00",
+        "MEDIUM" => "#fdd835",
+        "LOW" => "#1e88e5",
+        _ => "#43a047",
     };
     let classification_color = match r.classification {
-        Classification::Confidential  => "#e53935",
-        Classification::Restricted    => "#fb8c00",
-        Classification::Internal      => "#1e88e5",
-        Classification::Unclassified  => "#43a047",
+        Classification::Confidential => "#e53935",
+        Classification::Restricted => "#fb8c00",
+        Classification::Internal => "#1e88e5",
+        Classification::Unclassified => "#43a047",
     };
 
-    let events_html  = render_events(r);
-    let relays_html  = render_relays(r);
-    let iocs_html    = render_iocs(&r.iocs);
+    let events_html = render_events(r);
+    let relays_html = render_relays(r);
+    let iocs_html = render_iocs(&r.iocs);
     let timeline_html = render_timeline(&r.timeline);
-    let cm_html      = render_countermeasures(r);
+    let cm_html = render_countermeasures(r);
     let integrity_html = render_integrity(r);
-    let raw_json     = html_escape(&r.to_json_pretty());
+    let raw_json = html_escape(&r.to_json_pretty());
 
     format!(
         r#"<!DOCTYPE html>
@@ -187,39 +188,43 @@ details pre{{font-size:11px;font-family:monospace;color:#8b949e;overflow-x:auto;
 
 </body>
 </html>"#,
-        cls_color    = classification_color,
-        cls          = r.classification,
-        sev_color    = severity_color,
+        cls_color = classification_color,
+        cls = r.classification,
+        sev_color = severity_color,
         severity_badge = severity_badge,
-        id           = r.id,
-        created_at   = r.created_at.format("%Y-%m-%d %H:%M:%S UTC"),
+        id = r.id,
+        created_at = r.created_at.format("%Y-%m-%d %H:%M:%S UTC"),
         case_id_disp = r.case_id.as_deref().unwrap_or("—"),
         investigator = r.investigator.as_deref().unwrap_or("—"),
-        generator    = html_escape(&r.generator),
+        generator = html_escape(&r.generator),
         prev_hash_row = if let Some(ref ph) = r.prev_hash {
             format!("<b>Prev-Hash</b><span class=\"mono\">{}</span>", &ph[..20])
         } else {
             "<b>Prev-Hash</b><span style=\"color:#8b949e\">— (erster Bericht)</span>".into()
         },
-        notes_block  = if r.notes.is_empty() { String::new() } else {
-            format!("<div style=\"max-width:320px;font-size:13px;color:var(--text2)\">{}</div>",
-                    html_escape(&r.notes))
+        notes_block = if r.notes.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "<div style=\"max-width:320px;font-size:13px;color:var(--text2)\">{}</div>",
+                html_escape(&r.notes)
+            )
         },
         n_events = r.threat_events.len(),
         n_relays = r.relay_profiles.len(),
-        n_iocs   = r.iocs.len(),
-        n_tl     = r.timeline.len(),
-        n_cm     = r.countermeasures.len(),
+        n_iocs = r.iocs.len(),
+        n_tl = r.timeline.len(),
+        n_cm = r.countermeasures.len(),
         timeline_html = timeline_html,
-        events_html   = events_html,
-        relays_html   = relays_html,
-        iocs_html     = iocs_html,
-        cm_html       = cm_html,
+        events_html = events_html,
+        relays_html = relays_html,
+        iocs_html = iocs_html,
+        cm_html = cm_html,
         integrity_html = integrity_html,
-        raw_json      = raw_json,
-        ver          = env!("CARGO_PKG_VERSION"),
-        hash_prefix  = &r.content_hash[..16.min(r.content_hash.len())],
-        case_id      = r.case_id.as_deref().unwrap_or("(kein Fall)"),
+        raw_json = raw_json,
+        ver = env!("CARGO_PKG_VERSION"),
+        hash_prefix = &r.content_hash[..16.min(r.content_hash.len())],
+        case_id = r.case_id.as_deref().unwrap_or("(kein Fall)"),
     )
 }
 
@@ -229,24 +234,28 @@ fn render_timeline(entries: &[TimelineEntry]) -> String {
     if entries.is_empty() {
         return "<p style=\"color:#8b949e\">Keine Einträge.</p>".into();
     }
-    let items: String = entries.iter().map(|e| {
-        let kind_color = match e.kind.as_str() {
-            "threat"           => "#f85149",
-            "osint"            => "#58a6ff",
-            "countermeasure"   => "#3fb950",
-            _                  => "#8b949e",
-        };
-        format!(
-            "<li><span class=\"ts\">{}</span>
+    let items: String = entries
+        .iter()
+        .map(|e| {
+            let kind_color = match e.kind.as_str() {
+                "threat" => "#f85149",
+                "osint" => "#58a6ff",
+                "countermeasure" => "#3fb950",
+                _ => "#8b949e",
+            };
+            format!(
+                "<li><span class=\"ts\">{}</span>
              <span style=\"display:inline-block;width:10px;height:10px;border-radius:50%;\
                background:{};margin:0 8px -1px\"></span>
              <b style=\"color:{}\">[{}]</b> {}</li>",
-            e.ts.format("%Y-%m-%d %H:%M:%S"),
-            kind_color, kind_color,
-            html_escape(&e.kind.to_uppercase()),
-            html_escape(&e.description),
-        )
-    }).collect();
+                e.ts.format("%Y-%m-%d %H:%M:%S"),
+                kind_color,
+                kind_color,
+                html_escape(&e.kind.to_uppercase()),
+                html_escape(&e.description),
+            )
+        })
+        .collect();
     format!("<ul class=\"timeline\">{items}</ul>")
 }
 
@@ -254,25 +263,30 @@ fn render_events(r: &EvidenceReport) -> String {
     if r.threat_events.is_empty() {
         return "<p style=\"color:#8b949e\">Keine Ereignisse.</p>".into();
     }
-    let rows: String = r.threat_events.iter().map(|v| {
-        let level   = v["level"].as_str().unwrap_or("INFO");
-        let ts      = v["timestamp"].as_str().unwrap_or("—");
-        let msg     = v["message"].as_str().unwrap_or("—");
-        let score   = v["anomaly_score"].as_f64().unwrap_or(0.0);
-        let id      = v["id"].as_str().unwrap_or("—");
-        format!(
-            "<tr><td class=\"mono\" style=\"font-size:11px\">{}</td>\
+    let rows: String = r
+        .threat_events
+        .iter()
+        .map(|v| {
+            let level = v["level"].as_str().unwrap_or("INFO");
+            let ts = v["timestamp"].as_str().unwrap_or("—");
+            let msg = v["message"].as_str().unwrap_or("—");
+            let score = v["anomaly_score"].as_f64().unwrap_or(0.0);
+            let id = v["id"].as_str().unwrap_or("—");
+            format!(
+                "<tr><td class=\"mono\" style=\"font-size:11px\">{}</td>\
              <td><span class=\"sev-{}\">{}</span></td>\
              <td>{}</td>\
              <td style=\"text-align:right\">{:.2}</td>\
              <td class=\"mono\" style=\"font-size:10px;color:#8b949e\">{}</td></tr>",
-            html_escape(&ts[..19.min(ts.len())]),
-            level, level,
-            html_escape(msg),
-            score,
-            html_escape(&id[..8.min(id.len())]),
-        )
-    }).collect();
+                html_escape(&ts[..19.min(ts.len())]),
+                level,
+                level,
+                html_escape(msg),
+                score,
+                html_escape(&id[..8.min(id.len())]),
+            )
+        })
+        .collect();
     format!(
         "<table><thead><tr><th>Zeitstempel</th><th>Level</th>\
          <th>Meldung</th><th style=\"text-align:right\">Score</th><th>ID</th></tr></thead>\
@@ -283,39 +297,51 @@ fn render_events(r: &EvidenceReport) -> String {
 fn render_relays(r: &EvidenceReport) -> String {
     if r.relay_profiles.is_empty() {
         return "<p style=\"color:#8b949e\">Keine Relay-Profile vorhanden. \
-                Arc-Endpunkt anklicken um OSINT zu starten.</p>".into();
+                Arc-Endpunkt anklicken um OSINT zu starten.</p>"
+            .into();
     }
-    let rows: String = r.relay_profiles.iter().map(|v| {
-        let fp      = v["fingerprint"].as_str().unwrap_or("—");
-        let nick    = v["nickname"].as_str().unwrap_or("—");
-        let ip      = v["ip"].as_str().unwrap_or("—");
-        let country = v["geo_country"].as_str().unwrap_or(v["country"].as_str().unwrap_or("—"));
-        let isp     = v["geo_isp"].as_str().unwrap_or("—");
-        let asn     = v["asn"].as_str().unwrap_or("—");
-        let flags: Vec<&str> = v["flags"].as_array()
-            .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
-            .unwrap_or_default();
-        let flags_html: String = flags.iter()
-            .map(|f| format!("<span class=\"flag {}\">{f}</span>", f))
-            .collect();
-        let bw = v["bandwidth_rate"].as_u64().unwrap_or(0);
-        let bw_str = if bw >= 1_000_000 { format!("{:.1} MB/s", bw as f64/1e6) }
-                     else { format!("{:.0} KB/s", bw as f64/1e3) };
-        format!(
-            "<tr><td class=\"mono\" style=\"font-size:11px\">{}</td>\
+    let rows: String = r
+        .relay_profiles
+        .iter()
+        .map(|v| {
+            let fp = v["fingerprint"].as_str().unwrap_or("—");
+            let nick = v["nickname"].as_str().unwrap_or("—");
+            let ip = v["ip"].as_str().unwrap_or("—");
+            let country = v["geo_country"]
+                .as_str()
+                .unwrap_or(v["country"].as_str().unwrap_or("—"));
+            let isp = v["geo_isp"].as_str().unwrap_or("—");
+            let asn = v["asn"].as_str().unwrap_or("—");
+            let flags: Vec<&str> = v["flags"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
+                .unwrap_or_default();
+            let flags_html: String = flags
+                .iter()
+                .map(|f| format!("<span class=\"flag {}\">{f}</span>", f))
+                .collect();
+            let bw = v["bandwidth_rate"].as_u64().unwrap_or(0);
+            let bw_str = if bw >= 1_000_000 {
+                format!("{:.1} MB/s", bw as f64 / 1e6)
+            } else {
+                format!("{:.0} KB/s", bw as f64 / 1e3)
+            };
+            format!(
+                "<tr><td class=\"mono\" style=\"font-size:11px\">{}</td>\
              <td><b>{}</b></td><td class=\"mono\">{}</td><td>{}</td>\
              <td style=\"font-size:12px\">{}</td><td>{}</td>\
              <td style=\"font-size:12px\">{}</td><td>{}</td></tr>",
-            html_escape(&fp[..16.min(fp.len())]),
-            html_escape(nick),
-            html_escape(ip),
-            html_escape(country),
-            flags_html,
-            html_escape(isp),
-            html_escape(asn),
-            bw_str,
-        )
-    }).collect();
+                html_escape(&fp[..16.min(fp.len())]),
+                html_escape(nick),
+                html_escape(ip),
+                html_escape(country),
+                flags_html,
+                html_escape(isp),
+                html_escape(asn),
+                bw_str,
+            )
+        })
+        .collect();
     format!(
         "<table><thead><tr><th>Fingerprint (16)</th><th>Nickname</th><th>IP</th>\
          <th>Land</th><th>Flags</th><th>ISP</th><th>ASN</th><th>BW</th></tr></thead>\
@@ -327,21 +353,26 @@ fn render_iocs(iocs: &[Ioc]) -> String {
     if iocs.is_empty() {
         return "<p style=\"color:#8b949e\">Keine IOCs extrahiert.</p>".into();
     }
-    let rows: String = iocs.iter().map(|ioc| {
-        let kind_class = format!("ioc-{}", ioc.kind);
-        format!(
-            "<tr><td><span class=\"{}\">{}</span></td>\
+    let rows: String = iocs
+        .iter()
+        .map(|ioc| {
+            let kind_class = format!("ioc-{}", ioc.kind);
+            format!(
+                "<tr><td><span class=\"{}\">{}</span></td>\
              <td class=\"mono\">{}</td>\
              <td>{}</td>\
              <td class=\"sev-{}\">{}</td>\
              <td class=\"mono\" style=\"font-size:11px\">{}</td></tr>",
-            kind_class, html_escape(&ioc.kind.to_uppercase()),
-            html_escape(&ioc.value),
-            html_escape(&ioc.context),
-            ioc.severity, html_escape(&ioc.severity),
-            ioc.first_seen.format("%Y-%m-%d %H:%M:%S"),
-        )
-    }).collect();
+                kind_class,
+                html_escape(&ioc.kind.to_uppercase()),
+                html_escape(&ioc.value),
+                html_escape(&ioc.context),
+                ioc.severity,
+                html_escape(&ioc.severity),
+                ioc.first_seen.format("%Y-%m-%d %H:%M:%S"),
+            )
+        })
+        .collect();
     format!(
         "<table><thead><tr><th>Typ</th><th>Wert</th><th>Kontext</th>\
          <th>Schwere</th><th>Erstmals gesehen</th></tr></thead>\
@@ -361,16 +392,20 @@ fn render_countermeasures(r: &EvidenceReport) -> String {
         "AbuseIPDB curl-Befehl",
         "ISP Abuse E-Mail-Entwurf",
     ];
-    r.countermeasures.iter().enumerate().map(|(i, text)| {
-        let title = labels.get(i).copied().unwrap_or("Gegenmassnahme");
-        format!(
-            "<div class=\"cm-block\">\
+    r.countermeasures
+        .iter()
+        .enumerate()
+        .map(|(i, text)| {
+            let title = labels.get(i).copied().unwrap_or("Gegenmassnahme");
+            format!(
+                "<div class=\"cm-block\">\
                <div class=\"cm-title\">▶ {title}</div>\
                <pre class=\"cm-body\">{}</pre>\
              </div>",
-            html_escape(text)
-        )
-    }).collect()
+                html_escape(text)
+            )
+        })
+        .collect()
 }
 
 fn render_integrity(r: &EvidenceReport) -> String {
@@ -413,7 +448,7 @@ fn render_integrity(r: &EvidenceReport) -> String {
 
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
-     .replace('<', "&lt;")
-     .replace('>', "&gt;")
-     .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }

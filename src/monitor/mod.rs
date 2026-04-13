@@ -5,21 +5,15 @@
 pub mod api;
 pub mod metrics;
 
-use crate::{
-    config::ShieldConfig,
-    detectors::{
-        dos::DosDetector,
-        timing::TimingDetector,
-        EventTx,
-    },
-    event::{MetricsSnapshot, ThreatEvent, ThreatKind},
-    storage::ReputationStore,
-};
 #[cfg(feature = "arti-hooks")]
 use crate::detectors::{
-    guard_discovery::GuardDiscoveryDetector,
-    hs_enumeration::HsEnumDetector,
-    sybil::SybilDetector,
+    guard_discovery::GuardDiscoveryDetector, hs_enumeration::HsEnumDetector, sybil::SybilDetector,
+};
+use crate::{
+    config::ShieldConfig,
+    detectors::{dos::DosDetector, timing::TimingDetector, EventTx},
+    event::{MetricsSnapshot, ThreatEvent, ThreatKind},
+    storage::ReputationStore,
 };
 use anyhow::Result;
 use std::{
@@ -39,12 +33,12 @@ pub struct SharedState {
     /// Ring buffer of the most recent threat events (up to 200).
     pub recent_events: Vec<ThreatEvent>,
     /// Latest metrics snapshot served by `/api/metrics`.
-    pub metrics:       MetricsSnapshot,
+    pub metrics: MetricsSnapshot,
     /// Exponentially smoothed composite anomaly score `[0, 1]`.
     pub anomaly_score: f64,
     /// Human-readable arti connection status shown in the dashboard.
     /// Values: `"booting"` | `"connecting"` | `"online"` | `"no-arti"` | `"error: …"`
-    pub arti_status:   String,
+    pub arti_status: String,
 }
 
 // ── Main struct ───────────────────────────────────────────────────────────────
@@ -88,13 +82,13 @@ impl ArtiShield {
         #[cfg(feature = "arti-hooks")]
         {
             let config2 = self.config.clone();
-            let tx2     = tx.clone();
-            let store2  = store.clone();
+            let tx2 = tx.clone();
+            let store2 = store.clone();
             let shared2 = shared.clone();
 
             tokio::spawn(async move {
-                use arti_client::{TorClient, TorClientConfig};
                 use crate::mitigations::MitigationEngine;
+                use arti_client::{TorClient, TorClientConfig};
                 use tor_rtcompat::PreferredRuntime;
 
                 {
@@ -103,10 +97,8 @@ impl ArtiShield {
                 }
                 info!("ArtiShield: bootstrapping arti in background…");
 
-                match TorClient::<PreferredRuntime>::create_bootstrapped(
-                    TorClientConfig::default(),
-                )
-                .await
+                match TorClient::<PreferredRuntime>::create_bootstrapped(TorClientConfig::default())
+                    .await
                 {
                     Ok(tor_client) => {
                         info!("ArtiShield: arti online");
@@ -115,25 +107,18 @@ impl ArtiShield {
                         let dirmgr = tor_client.dirmgr().clone();
 
                         tokio::spawn(
-                            SybilDetector::new(config2.clone(), tx2.clone())
-                                .run(dirmgr.clone()),
+                            SybilDetector::new(config2.clone(), tx2.clone()).run(dirmgr.clone()),
                         );
                         tokio::spawn(
                             GuardDiscoveryDetector::new(config2.clone(), tx2.clone())
                                 .run(dirmgr.clone()),
                         );
                         tokio::spawn(
-                            HsEnumDetector::new(config2.clone(), tx2.clone())
-                                .run(dirmgr.clone()),
+                            HsEnumDetector::new(config2.clone(), tx2.clone()).run(dirmgr.clone()),
                         );
                         tokio::spawn(
-                            MitigationEngine::new(
-                                config2,
-                                tx2.subscribe(),
-                                store2,
-                                tor_client,
-                            )
-                            .run(),
+                            MitigationEngine::new(config2, tx2.subscribe(), store2, tor_client)
+                                .run(),
                         );
                     }
                     Err(e) => {
@@ -157,9 +142,9 @@ impl ArtiShield {
 
         // ── Storage + state writer ────────────────────────────────────────────
         {
-            let store3  = store.clone();
+            let store3 = store.clone();
             let shared3 = shared.clone();
-            let mut rx  = tx.subscribe();
+            let mut rx = tx.subscribe();
 
             tokio::spawn(async move {
                 loop {
@@ -175,20 +160,24 @@ impl ArtiShield {
                             s.recent_events.insert(0, evt);
                             s.recent_events.truncate(200);
 
-                            let now    = chrono::Utc::now();
-                            let ev_1m = s.recent_events.iter().filter(|e| {
-                                now.signed_duration_since(e.timestamp).num_seconds() < 60
-                            }).count() as u32;
+                            let now = chrono::Utc::now();
+                            let ev_1m = s
+                                .recent_events
+                                .iter()
+                                .filter(|e| {
+                                    now.signed_duration_since(e.timestamp).num_seconds() < 60
+                                })
+                                .count() as u32;
 
                             s.metrics = MetricsSnapshot {
-                                timestamp:          Some(now),
-                                active_circuits:    0,
-                                anomaly_score:      s.anomaly_score,
-                                blocked_ips:        store3.blocked_ip_count() as u32,
-                                bandwidth_kbps:     0.0,
+                                timestamp: Some(now),
+                                active_circuits: 0,
+                                anomaly_score: s.anomaly_score,
+                                blocked_ips: store3.blocked_ip_count() as u32,
+                                bandwidth_kbps: 0.0,
                                 events_last_minute: ev_1m,
-                                guard_fingerprint:  None,
-                                threat_level:       s.recent_events.first().map(|e| e.level),
+                                guard_fingerprint: None,
+                                threat_level: s.recent_events.first().map(|e| e.level),
                             };
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -208,7 +197,9 @@ impl ArtiShield {
                 loop {
                     t.tick().await;
                     if let Ok(n) = s.prune_expired_blocks() {
-                        if n > 0 { info!(n, "pruned expired IP blocks"); }
+                        if n > 0 {
+                            info!(n, "pruned expired IP blocks");
+                        }
                     }
                 }
             });
@@ -238,10 +229,10 @@ impl ArtiShield {
             api::ApiState {
                 shared,
                 store,
-                event_tx:       tx,
-                api_token:      self.config.api_token.clone(),
+                event_tx: tx,
+                api_token: self.config.api_token.clone(),
                 ws_connections: Arc::new(AtomicUsize::new(0)),
-                write_limiter:  Arc::new(std::sync::Mutex::new(HashMap::new())),
+                write_limiter: Arc::new(std::sync::Mutex::new(HashMap::new())),
             },
             addr,
         )
@@ -254,7 +245,11 @@ impl ArtiShield {
 
 fn update_reputation(store: &ReputationStore, evt: &ThreatEvent) {
     match &evt.kind {
-        ThreatKind::SybilCluster { affected_fps, shared_asn, .. } => {
+        ThreatKind::SybilCluster {
+            affected_fps,
+            shared_asn,
+            ..
+        } => {
             for fp in affected_fps {
                 if let Err(e) = store.update_relay(fp, evt.anomaly_score, *shared_asn, None) {
                     tracing::warn!(fp, "Failed to update relay reputation: {e}");
@@ -264,7 +259,10 @@ fn update_reputation(store: &ReputationStore, evt: &ThreatEvent) {
                 }
             }
         }
-        ThreatKind::GuardDiscovery { suspicious_fingerprints, .. } => {
+        ThreatKind::GuardDiscovery {
+            suspicious_fingerprints,
+            ..
+        } => {
             for fp in suspicious_fingerprints {
                 if let Err(e) = store.update_relay(fp, evt.anomaly_score * 0.5, None, None) {
                     tracing::warn!(fp, "Failed to update relay reputation: {e}");
@@ -274,7 +272,10 @@ fn update_reputation(store: &ReputationStore, evt: &ThreatEvent) {
                 }
             }
         }
-        ThreatKind::DenialOfService { source_relay: Some(fp), .. } => {
+        ThreatKind::DenialOfService {
+            source_relay: Some(fp),
+            ..
+        } => {
             if let Err(e) = store.update_relay(fp, evt.anomaly_score * 0.6, None, None) {
                 tracing::warn!(fp, "Failed to update relay reputation: {e}");
             }

@@ -23,36 +23,36 @@ use crate::osint::{OsintRequest, OsintRequestSender};
 // ISO-3166 alpha-2 → (lat°, lon°).  Used to place relay dots and arc endpoints.
 
 const COUNTRY_CENTROIDS: &[(&str, f32, f32)] = &[
-    ("US",  38.0, -97.0),
-    ("DE",  51.2,  10.5),
-    ("NL",  52.1,   5.3),
-    ("FR",  46.2,   2.2),
-    ("GB",  55.4,  -3.4),
-    ("SE",  60.1,  18.6),
-    ("CH",  47.0,   8.2),
-    ("RU",  60.0,  90.0),
-    ("CN",  35.0, 105.0),
-    ("JP",  36.2, 138.3),
+    ("US", 38.0, -97.0),
+    ("DE", 51.2, 10.5),
+    ("NL", 52.1, 5.3),
+    ("FR", 46.2, 2.2),
+    ("GB", 55.4, -3.4),
+    ("SE", 60.1, 18.6),
+    ("CH", 47.0, 8.2),
+    ("RU", 60.0, 90.0),
+    ("CN", 35.0, 105.0),
+    ("JP", 36.2, 138.3),
     ("AU", -25.3, 133.8),
     ("BR", -14.2, -51.9),
-    ("CA",  56.1,-106.3),
-    ("IN",  20.6,  79.0),
-    ("UA",  48.4,  31.2),
-    ("RO",  45.9,  24.9),
-    ("LU",  49.8,   6.1),
-    ("FI",  61.9,  25.7),
-    ("AT",  47.5,  14.5),
-    ("CZ",  49.8,  15.5),
-    ("PL",  51.9,  19.1),
-    ("SG",   1.4, 103.8),
-    ("KR",  35.9, 127.8),
-    ("ZA", -29.0,  25.0),
-    ("MX",  23.6,-102.6),
+    ("CA", 56.1, -106.3),
+    ("IN", 20.6, 79.0),
+    ("UA", 48.4, 31.2),
+    ("RO", 45.9, 24.9),
+    ("LU", 49.8, 6.1),
+    ("FI", 61.9, 25.7),
+    ("AT", 47.5, 14.5),
+    ("CZ", 49.8, 15.5),
+    ("PL", 51.9, 19.1),
+    ("SG", 1.4, 103.8),
+    ("KR", 35.9, 127.8),
+    ("ZA", -29.0, 25.0),
+    ("MX", 23.6, -102.6),
     ("AR", -38.4, -63.6),
-    ("TR",  38.9,  35.2),
-    ("IR",  32.4,  53.7),
-    ("EG",  26.8,  30.8),
-    ("NG",   9.1,   8.7),
+    ("TR", 38.9, 35.2),
+    ("IR", 32.4, 53.7),
+    ("EG", 26.8, 30.8),
+    ("NG", 9.1, 8.7),
 ];
 
 /// Convert geographic coordinates to a globe-surface point (Y-up, unit sphere).
@@ -211,7 +211,14 @@ fn setup_scene(
     // Globe sphere — 72×36 UV-sphere so texture pixels align with meridians
     commands.spawn((
         PbrBundle {
-            mesh: meshes.add(shape::UVSphere { radius: 1.0, sectors: 72, stacks: 36 }.into()),
+            mesh: meshes.add(
+                shape::UVSphere {
+                    radius: 1.0,
+                    sectors: 72,
+                    stacks: 36,
+                }
+                .into(),
+            ),
             material: materials.add(StandardMaterial {
                 base_color_texture: Some(earth_texture),
                 // Slight fall-back tint when the texture hasn't loaded yet
@@ -229,7 +236,14 @@ fn setup_scene(
 
     // Atmosphere — slightly larger translucent sphere
     commands.spawn(PbrBundle {
-        mesh: meshes.add(shape::UVSphere { radius: 1.03, sectors: 32, stacks: 16 }.into()),
+        mesh: meshes.add(
+            shape::UVSphere {
+                radius: 1.03,
+                sectors: 32,
+                stacks: 16,
+            }
+            .into(),
+        ),
         material: materials.add(StandardMaterial {
             base_color: Color::rgba(0.15, 0.45, 0.85, 0.07),
             alpha_mode: AlphaMode::Blend,
@@ -263,7 +277,7 @@ fn camera_orbit(
 
     if mouse_input.pressed(MouseButton::Left) {
         for ev in motion.iter() {
-            yaw   -= ev.delta.x * 0.4 * time.delta_seconds();
+            yaw -= ev.delta.x * 0.4 * time.delta_seconds();
             pitch -= ev.delta.y * 0.4 * time.delta_seconds();
         }
     } else {
@@ -285,7 +299,7 @@ fn camera_orbit(
             transform.look_at(Vec3::ZERO, Vec3::Y);
         }
         if zoom.abs() > 1e-3 {
-            let dir  = transform.translation.normalize();
+            let dir = transform.translation.normalize();
             let dist = (transform.translation.length() + zoom).clamp(1.8, 6.0);
             transform.translation = dir * dist;
         }
@@ -302,7 +316,7 @@ fn draw_graticule(mut gizmos: Gizmos<'_>) {
     for lat_i in (-60..=60_i32).step_by(30) {
         let lat = (lat_i as f32).to_radians();
         let ring_r = r * lat.cos();
-        let y      = r * lat.sin();
+        let y = r * lat.sin();
         let mut prev = Vec3::new(ring_r, y, 0.0);
         for i in 1..=STEPS {
             let lon = (i as f32 / STEPS as f32) * std::f32::consts::TAU;
@@ -316,7 +330,11 @@ fn draw_graticule(mut gizmos: Gizmos<'_>) {
     for lon_i in (0..360_i32).step_by(30) {
         let lon = (lon_i as f32).to_radians();
         let lat0 = -std::f32::consts::FRAC_PI_2;
-        let mut prev = Vec3::new(r * lat0.cos() * lon.sin(), r * lat0.sin(), r * lat0.cos() * lon.cos());
+        let mut prev = Vec3::new(
+            r * lat0.cos() * lon.sin(),
+            r * lat0.sin(),
+            r * lat0.cos() * lon.cos(),
+        );
         for i in 1..=STEPS {
             let lat = lat0 + (i as f32 / STEPS as f32) * std::f32::consts::PI;
             let next = Vec3::new(
@@ -355,10 +373,21 @@ fn receive_globe_events(
                 // Trigger relay OSINT for any fingerprints in the event
                 if let Some(ref tx) = osint_tx {
                     let fps: Vec<String> = match &evt.kind {
-                        ThreatKind::SybilCluster { affected_fps, .. }         => affected_fps.iter().take(3).cloned().collect(),
-                        ThreatKind::GuardDiscovery { suspicious_fingerprints, .. } => suspicious_fingerprints.iter().take(3).cloned().collect(),
-                        ThreatKind::DenialOfService { source_relay: Some(fp), .. } => vec![fp.clone()],
-                        ThreatKind::HsEnumeration { suspected_scanner: Some(ip), .. } => {
+                        ThreatKind::SybilCluster { affected_fps, .. } => {
+                            affected_fps.iter().take(3).cloned().collect()
+                        }
+                        ThreatKind::GuardDiscovery {
+                            suspicious_fingerprints,
+                            ..
+                        } => suspicious_fingerprints.iter().take(3).cloned().collect(),
+                        ThreatKind::DenialOfService {
+                            source_relay: Some(fp),
+                            ..
+                        } => vec![fp.clone()],
+                        ThreatKind::HsEnumeration {
+                            suspected_scanner: Some(ip),
+                            ..
+                        } => {
                             // IP-level lookup as fallback (relay acting as scanner)
                             let _ = tx.0.try_send(OsintRequest::Ip(*ip));
                             vec![]
@@ -371,7 +400,9 @@ fn receive_globe_events(
                 }
                 spawn_arc(&mut commands, &evt);
             }
-            Ok(GlobeMessage::RelayGeo { lat, lon, level, .. }) => {
+            Ok(GlobeMessage::RelayGeo {
+                lat, lon, level, ..
+            }) => {
                 spawn_relay_dot(&mut commands, &mut meshes, &mut materials, lat, lon, level);
             }
             Err(_) => break,
@@ -393,7 +424,14 @@ fn spawn_relay_dot(
 
     commands.spawn((
         PbrBundle {
-            mesh: meshes.add(shape::UVSphere { radius: 0.008, sectors: 8, stacks: 4 }.into()),
+            mesh: meshes.add(
+                shape::UVSphere {
+                    radius: 0.008,
+                    sectors: 8,
+                    stacks: 4,
+                }
+                .into(),
+            ),
             material: materials.add(StandardMaterial {
                 base_color: col,
                 emissive: col * 0.6,
@@ -410,40 +448,54 @@ fn spawn_relay_dot(
 /// Spawn an [`AttackArc`] entity for the given event.
 fn spawn_arc(commands: &mut Commands<'_, '_>, evt: &ThreatEvent) {
     let color = level_color(evt.level, 1.0);
-    let seed  = evt.timestamp.timestamp() as f32;
+    let seed = evt.timestamp.timestamp() as f32;
 
     let start = geo_pos_from_event(evt, seed, false);
-    let end   = geo_pos_from_event(evt, seed, true);
+    let end = geo_pos_from_event(evt, seed, true);
 
-    let mid  = (start + end) * 0.5;
+    let mid = (start + end) * 0.5;
     let apex = mid.normalize() * (mid.length() + 0.45);
 
     let ttl = match evt.level {
         ThreatLevel::Critical | ThreatLevel::High => 8.0,
-        ThreatLevel::Medium                       => 6.0,
-        _                                         => 4.0,
+        ThreatLevel::Medium => 6.0,
+        _ => 4.0,
     };
 
     // Extract relay fingerprints for click-based OSINT
     let source_fingerprints: Vec<String> = match &evt.kind {
-        ThreatKind::SybilCluster { affected_fps, .. }              => affected_fps.iter().take(5).cloned().collect(),
-        ThreatKind::GuardDiscovery { suspicious_fingerprints, .. } => suspicious_fingerprints.iter().take(5).cloned().collect(),
-        ThreatKind::DenialOfService { source_relay: Some(fp), .. } => vec![fp.clone()],
+        ThreatKind::SybilCluster { affected_fps, .. } => {
+            affected_fps.iter().take(5).cloned().collect()
+        }
+        ThreatKind::GuardDiscovery {
+            suspicious_fingerprints,
+            ..
+        } => suspicious_fingerprints.iter().take(5).cloned().collect(),
+        ThreatKind::DenialOfService {
+            source_relay: Some(fp),
+            ..
+        } => vec![fp.clone()],
         _ => vec![],
     };
 
     let threat_kind_label = match &evt.kind {
-        ThreatKind::SybilCluster { .. }     => "Sybil Cluster",
-        ThreatKind::GuardDiscovery { .. }   => "Guard Discovery",
-        ThreatKind::DenialOfService { .. }  => "Denial of Service",
-        ThreatKind::HsEnumeration { .. }    => "HS Enumeration",
-        ThreatKind::TimingCorrelation { .. }=> "Timing Correlation",
-        ThreatKind::AnomalySpike { .. }     => "Anomaly Spike",
-        ThreatKind::CanaryFailure { .. }    => "Canary Failure",
-    }.to_owned();
+        ThreatKind::SybilCluster { .. } => "Sybil Cluster",
+        ThreatKind::GuardDiscovery { .. } => "Guard Discovery",
+        ThreatKind::DenialOfService { .. } => "Denial of Service",
+        ThreatKind::HsEnumeration { .. } => "HS Enumeration",
+        ThreatKind::TimingCorrelation { .. } => "Timing Correlation",
+        ThreatKind::AnomalySpike { .. } => "Anomaly Spike",
+        ThreatKind::CanaryFailure { .. } => "Canary Failure",
+    }
+    .to_owned();
 
     commands.spawn(AttackArc {
-        start, end, apex, progress: 0.0, color, ttl,
+        start,
+        end,
+        apex,
+        progress: 0.0,
+        color,
+        ttl,
         source_fingerprints,
         threat_kind_label,
     });
@@ -456,10 +508,17 @@ fn spawn_arc(commands: &mut Commands<'_, '_>, evt: &ThreatEvent) {
 fn geo_pos_from_event(evt: &ThreatEvent, seed: f32, destination: bool) -> Vec3 {
     // Try to extract a country code or IP from the event kind.
     match &evt.kind {
-        ThreatKind::HsEnumeration { suspected_scanner: Some(ip), .. } if !destination => {
+        ThreatKind::HsEnumeration {
+            suspected_scanner: Some(ip),
+            ..
+        } if !destination => {
             // Rough lat/lon from first IP octet (placeholder until GeoIP is wired)
-            let first: f32 = ip.to_string().split('.').next()
-                .and_then(|s| s.parse().ok()).unwrap_or(128.0);
+            let first: f32 = ip
+                .to_string()
+                .split('.')
+                .next()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(128.0);
             let lat = (first - 128.0) * 0.7;
             let lon = (seed * 13.7).rem_euclid(360.0) - 180.0;
             lat_lon_to_vec3(lat, lon, 1.01)
@@ -488,12 +547,22 @@ fn pick_arc_endpoint(
     mut selected: ResMut<'_, SelectedArc>,
     osint_tx: Option<Res<'_, OsintRequestSender>>,
 ) {
-    if !mouse_btn.just_pressed(MouseButton::Left) { return; }
+    if !mouse_btn.just_pressed(MouseButton::Left) {
+        return;
+    }
 
-    let Ok(window) = windows.get_single() else { return };
-    let Some(cursor) = window.cursor_position() else { return };
-    let Ok((cam, cam_t)) = camera_q.get_single() else { return };
-    let Some(ray) = cam.viewport_to_world(cam_t, cursor) else { return };
+    let Ok(window) = windows.get_single() else {
+        return;
+    };
+    let Some(cursor) = window.cursor_position() else {
+        return;
+    };
+    let Ok((cam, cam_t)) = camera_q.get_single() else {
+        return;
+    };
+    let Some(ray) = cam.viewport_to_world(cam_t, cursor) else {
+        return;
+    };
 
     // Radius (in world units) within which a click registers on an endpoint
     const PICK_RADIUS: f32 = 0.07;
@@ -504,7 +573,7 @@ fn pick_arc_endpoint(
     for arc in arc_q.iter() {
         for &pt in &[arc.start, arc.end] {
             // Distance from world point to infinite ray
-            let oc  = pt - ray.origin;
+            let oc = pt - ray.origin;
             let proj = oc.dot(ray.direction).max(0.0);
             let closest = ray.origin + ray.direction * proj;
             let dist = (pt - closest).length();
@@ -517,13 +586,15 @@ fn pick_arc_endpoint(
 
     if let Some((arc, pt)) = best {
         selected.fingerprints = arc.source_fingerprints.clone();
-        selected.endpoint     = Some(pt);
-        selected.label        = arc.threat_kind_label.clone();
+        selected.endpoint = Some(pt);
+        selected.label = arc.threat_kind_label.clone();
 
         // Fire relay OSINT for all fingerprints in this arc
         if let Some(ref tx) = osint_tx {
             for fp in &arc.source_fingerprints {
-                let _ = tx.0.try_send(OsintRequest::Relay { fingerprint: fp.clone() });
+                let _ = tx.0.try_send(OsintRequest::Relay {
+                    fingerprint: fp.clone(),
+                });
             }
         }
     }
@@ -551,8 +622,8 @@ fn draw_arcs(mut gizmos: Gizmos<'_>, q: Query<'_, '_, &AttackArc>, selected: Res
 
     for arc in q.iter() {
         let visible = (arc.progress * STEPS as f32) as usize;
-        let alpha   = (arc.ttl / 8.0).clamp(0.0, 1.0);
-        let color   = color_with_alpha(arc.color, alpha);
+        let alpha = (arc.ttl / 8.0).clamp(0.0, 1.0);
+        let color = color_with_alpha(arc.color, alpha);
 
         let mut prev = arc.start;
         for i in 1..=visible.min(STEPS) {
@@ -564,9 +635,14 @@ fn draw_arcs(mut gizmos: Gizmos<'_>, q: Query<'_, '_, &AttackArc>, selected: Res
 
         // Pulse dot at the arc head
         if visible > 0 && visible <= STEPS {
-            let t    = visible as f32 / STEPS as f32;
+            let t = visible as f32 / STEPS as f32;
             let head = bezier(arc.start, arc.apex, arc.end, t);
-            gizmos.sphere(head, Quat::IDENTITY, 0.012, color_with_alpha(arc.color, alpha * 0.9));
+            gizmos.sphere(
+                head,
+                Quat::IDENTITY,
+                0.012,
+                color_with_alpha(arc.color, alpha * 0.9),
+            );
         }
     }
 
@@ -595,10 +671,10 @@ fn color_with_alpha(c: Color, alpha: f32) -> Color {
 fn level_color(level: ThreatLevel, alpha: f32) -> Color {
     match level {
         ThreatLevel::Critical => Color::rgba(1.00, 0.10, 0.10, alpha),
-        ThreatLevel::High     => Color::rgba(1.00, 0.50, 0.05, alpha),
-        ThreatLevel::Medium   => Color::rgba(1.00, 0.90, 0.10, alpha),
-        ThreatLevel::Low      => Color::rgba(0.10, 0.75, 1.00, alpha),
-        ThreatLevel::Info     => Color::rgba(0.10, 1.00, 0.40, alpha),
+        ThreatLevel::High => Color::rgba(1.00, 0.50, 0.05, alpha),
+        ThreatLevel::Medium => Color::rgba(1.00, 0.90, 0.10, alpha),
+        ThreatLevel::Low => Color::rgba(0.10, 0.75, 1.00, alpha),
+        ThreatLevel::Info => Color::rgba(0.10, 1.00, 0.40, alpha),
     }
 }
 
@@ -626,7 +702,7 @@ pub fn start_demo_thread(tx: mpsc::Sender<GlobeMessage>) {
             let evt = ThreatEvent::new(
                 level,
                 ThreatKind::AnomalySpike {
-                    score:                  0.6,
+                    score: 0.6,
                     contributing_detectors: vec!["demo".into()],
                 },
                 format!("Demo event #{counter}"),
@@ -689,7 +765,9 @@ pub fn run_native_app(config: crate::config::ShieldConfig, no_monitor: bool) -> 
 
                 // Optionally load GeoIP for position hints
                 #[cfg(feature = "geoip")]
-                let geoip = cfg.geoip_db.as_ref()
+                let geoip = cfg
+                    .geoip_db
+                    .as_ref()
                     .and_then(|p| {
                         let s = p.to_str()?;
                         // ASN DB used for both city and ASN slots (City lookup returns country)
@@ -719,9 +797,9 @@ pub fn run_native_app(config: crate::config::ShieldConfig, no_monitor: bool) -> 
     }
 
     // ── Bevy app setup ────────────────────────────────────────────────────────
+    use crate::node;
     use crate::node::{ArtishieldPipeline, ArtishieldSettings};
     use bevy::render::{extract_resource::ExtractResourcePlugin, RenderApp};
-    use crate::node;
 
     let mut app = App::new();
 
@@ -747,7 +825,7 @@ pub fn run_native_app(config: crate::config::ShieldConfig, no_monitor: bool) -> 
 
     // Post-processing effect settings
     app.insert_resource(ArtishieldSettings {
-        enabled:   true,
+        enabled: true,
         intensity: 0.6,
     });
 
@@ -791,7 +869,10 @@ fn emit_geo_hints(
     svc: &crate::geoip::GeoIpServiceInner,
 ) {
     let ips: Vec<std::net::IpAddr> = match &evt.kind {
-        ThreatKind::HsEnumeration { suspected_scanner: Some(ip), .. } => vec![*ip],
+        ThreatKind::HsEnumeration {
+            suspected_scanner: Some(ip),
+            ..
+        } => vec![*ip],
         ThreatKind::DenialOfService { .. } | ThreatKind::TimingCorrelation { .. } => vec![],
         _ => vec![],
     };

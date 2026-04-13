@@ -18,19 +18,31 @@ pub async fn render(shared: &Arc<RwLock<SharedState>>, store: &Arc<ReputationSto
     let mut out = String::with_capacity(2048);
 
     // ── artishield_anomaly_score ──────────────────────────────────────────────
-    metric(&mut out, "artishield_anomaly_score", "gauge",
-           "Rolling threat anomaly score [0,1]",
-           &[("", state.anomaly_score)]);
+    metric(
+        &mut out,
+        "artishield_anomaly_score",
+        "gauge",
+        "Rolling threat anomaly score [0,1]",
+        &[("", state.anomaly_score)],
+    );
 
     // ── artishield_blocked_ips ────────────────────────────────────────────────
-    metric(&mut out, "artishield_blocked_ips", "gauge",
-           "Number of currently blocked IPs",
-           &[("", store.blocked_ip_count() as f64)]);
+    metric(
+        &mut out,
+        "artishield_blocked_ips",
+        "gauge",
+        "Number of currently blocked IPs",
+        &[("", store.blocked_ip_count() as f64)],
+    );
 
     // ── artishield_events_last_minute ─────────────────────────────────────────
-    metric(&mut out, "artishield_events_last_minute", "gauge",
-           "Threat events in the last 60 s",
-           &[("", state.metrics.events_last_minute as f64)]);
+    metric(
+        &mut out,
+        "artishield_events_last_minute",
+        "gauge",
+        "Threat events in the last 60 s",
+        &[("", state.metrics.events_last_minute as f64)],
+    );
 
     // ── artishield_events_recent (by level) ──────────────────────────────────
     // Gauge, not counter: values come from a 200-event rolling buffer and can
@@ -44,7 +56,11 @@ pub async fn render(shared: &Arc<RwLock<SharedState>>, store: &Arc<ReputationSto
         ThreatLevel::High,
         ThreatLevel::Critical,
     ] {
-        let count = state.recent_events.iter().filter(|e| e.level == level).count();
+        let count = state
+            .recent_events
+            .iter()
+            .filter(|e| e.level == level)
+            .count();
         out.push_str(&format!(
             "artishield_events_recent{{level=\"{level}\"}} {count}\n"
         ));
@@ -63,7 +79,9 @@ pub async fn render(shared: &Arc<RwLock<SharedState>>, store: &Arc<ReputationSto
         "anomaly_spike",
         "canary_failure",
     ] {
-        let count = state.recent_events.iter()
+        let count = state
+            .recent_events
+            .iter()
             .filter(|e| kind_label(&e.kind) == kind)
             .count();
         out.push_str(&format!(
@@ -101,13 +119,13 @@ fn metric(out: &mut String, name: &str, typ: &str, help: &str, values: &[(&str, 
 /// Must be exhaustive — new variants will cause a compile error here, which is intentional.
 fn kind_label(kind: &ThreatKind) -> &'static str {
     match kind {
-        ThreatKind::SybilCluster { .. }      => "sybil_cluster",
+        ThreatKind::SybilCluster { .. } => "sybil_cluster",
         ThreatKind::TimingCorrelation { .. } => "timing_correlation",
-        ThreatKind::DenialOfService { .. }   => "denial_of_service",
-        ThreatKind::GuardDiscovery { .. }    => "guard_discovery",
-        ThreatKind::HsEnumeration { .. }     => "hs_enumeration",
-        ThreatKind::AnomalySpike { .. }      => "anomaly_spike",
-        ThreatKind::CanaryFailure { .. }     => "canary_failure",
+        ThreatKind::DenialOfService { .. } => "denial_of_service",
+        ThreatKind::GuardDiscovery { .. } => "guard_discovery",
+        ThreatKind::HsEnumeration { .. } => "hs_enumeration",
+        ThreatKind::AnomalySpike { .. } => "anomaly_spike",
+        ThreatKind::CanaryFailure { .. } => "canary_failure",
     }
 }
 
@@ -133,7 +151,7 @@ mod tests {
     #[tokio::test]
     async fn valid_prometheus_format() {
         let shared = Arc::new(RwLock::new(SharedState::default()));
-        let store  = Arc::new(crate::storage::ReputationStore::in_memory().unwrap());
+        let store = Arc::new(crate::storage::ReputationStore::in_memory().unwrap());
         let output = render(&shared, &store).await;
 
         assert!(output.contains("# HELP artishield_anomaly_score"));
@@ -152,16 +170,23 @@ mod tests {
     #[tokio::test]
     async fn all_levels_present() {
         let shared = Arc::new(RwLock::new(SharedState::default()));
-        let store  = Arc::new(crate::storage::ReputationStore::in_memory().unwrap());
+        let store = Arc::new(crate::storage::ReputationStore::in_memory().unwrap());
         let output = render(&shared, &store).await;
 
         for level in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] {
-            assert!(output.contains(&format!("level=\"{level}\"")), "missing level {level}");
+            assert!(
+                output.contains(&format!("level=\"{level}\"")),
+                "missing level {level}"
+            );
         }
         // Verify correct Prometheus type: gauge (not counter) since buffer can shrink
-        assert!(output.contains("# TYPE artishield_events_recent gauge"),
-                "events_recent must be gauge, not counter");
-        assert!(output.contains("# TYPE artishield_detector_events_recent gauge"),
-                "detector_events_recent must be gauge, not counter");
+        assert!(
+            output.contains("# TYPE artishield_events_recent gauge"),
+            "events_recent must be gauge, not counter"
+        );
+        assert!(
+            output.contains("# TYPE artishield_detector_events_recent gauge"),
+            "detector_events_recent must be gauge, not counter"
+        );
     }
 }

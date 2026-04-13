@@ -1,9 +1,6 @@
 //! Integration tests for the DoS detector.
 
-use artishield::{
-    ShieldConfig,
-    detectors::dos::DosDetector,
-};
+use artishield::{detectors::dos::DosDetector, ShieldConfig};
 use tokio::sync::broadcast;
 
 fn det() -> DosDetector {
@@ -21,10 +18,14 @@ fn det() -> DosDetector {
 #[test]
 fn default_config_baseline_multiplier() {
     // Verify our constant matches reasonable expectations
-    assert!(artishield::detectors::dos::BASELINE_MULTIPLIER >= 2.0,
-        "Baseline multiplier should be ≥ 2× for meaningful detection");
-    assert!(artishield::detectors::dos::BASELINE_MULTIPLIER <= 5.0,
-        "Baseline multiplier should be ≤ 5× to avoid too many false negatives");
+    assert!(
+        artishield::detectors::dos::BASELINE_MULTIPLIER >= 2.0,
+        "Baseline multiplier should be ≥ 2× for meaningful detection"
+    );
+    assert!(
+        artishield::detectors::dos::BASELINE_MULTIPLIER <= 5.0,
+        "Baseline multiplier should be ≤ 5× to avoid too many false negatives"
+    );
 }
 
 #[test]

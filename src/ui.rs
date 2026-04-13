@@ -7,8 +7,8 @@ use crate::countermeasures;
 use crate::event::ThreatEvent;
 use crate::evidence::{Classification, ReportBuilder};
 use crate::globe::SelectedArc;
-use crate::osint::{OsintResult, OsintResultReceiver};
 use crate::osint::relay::RelayProfile;
+use crate::osint::{OsintResult, OsintResultReceiver};
 
 // ── Shared state ──────────────────────────────────────────────────────────────
 
@@ -91,20 +91,20 @@ fn poll_osint_results(
 ) {
     let Some(recv) = receiver else { return };
     let rx = match recv.0.lock() {
-        Ok(g)  => g,
+        Ok(g) => g,
         Err(e) => e.into_inner(),
     };
     while let Ok(result) = rx.try_recv() {
         match result {
             OsintResult::Relay(profile) => {
-                let reason   = "Detected by ArtiShield threat monitor";
+                let reason = "Detected by ArtiShield threat monitor";
                 let evidence = "See ArtiShield event log for details.";
                 let cms = countermeasures::generate(&profile, reason, evidence);
                 // Accumulate for report builder
                 ui_state.report_relays.push(profile.clone());
                 ui_state.countermeasures = Some(cms);
-                ui_state.relay_profile   = Some(profile);
-                ui_state.tile_texture    = None;
+                ui_state.relay_profile = Some(profile);
+                ui_state.tile_texture = None;
             }
             OsintResult::Ip(ip_result) => {
                 // IP-level fallback: load OSM tile into egui texture
@@ -156,13 +156,22 @@ pub fn artishield_egui_system(
                     toggle_fullscreen();
                 }
             });
-            ui.label(egui::RichText::new("Left-click an arc endpoint to investigate").small().italics());
+            ui.label(
+                egui::RichText::new("Left-click an arc endpoint to investigate")
+                    .small()
+                    .italics(),
+            );
             ui.separator();
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for e in ui_state.latest_events.iter().rev().take(20) {
                     ui.colored_label(
                         level_color(e.level as u8),
-                        format!("[{:?}] {} — {}", e.level, e.timestamp.format("%H:%M:%S"), e.message),
+                        format!(
+                            "[{:?}] {} — {}",
+                            e.level,
+                            e.timestamp.format("%H:%M:%S"),
+                            e.message
+                        ),
                     );
                 }
             });
@@ -180,19 +189,31 @@ pub fn artishield_egui_system(
                     .striped(true)
                     .show(ui, |ui| {
                         row(ui, "Fingerprint", &profile.fingerprint);
-                        row(ui, "Nickname",    &profile.nickname);
-                        row(ui, "OR-Address",  &profile.or_address);
-                        row(ui, "Land",        &format!("{} ({})", profile.geo_country, profile.country));
-                        row(ui, "Stadt",       &profile.geo_city);
-                        row(ui, "ISP",         &profile.geo_isp);
-                        row(ui, "ASN",         &format!("{} {}", profile.asn, profile.as_name));
-                        row(ui, "Flags",       &profile.flags.join(", "));
-                        row(ui, "Bandwidth",   &fmt_bytes(profile.bandwidth_rate));
-                        row(ui, "Uptime 30d",  &format!("{:.1}%", profile.uptime * 100.0));
-                        row(ui, "Guard prob.", &format!("{:.4}", profile.guard_probability));
-                        row(ui, "Exit prob.",  &format!("{:.4}", profile.exit_probability));
-                        row(ui, "First seen",  &profile.first_seen);
-                        row(ui, "Platform",    &profile.platform);
+                        row(ui, "Nickname", &profile.nickname);
+                        row(ui, "OR-Address", &profile.or_address);
+                        row(
+                            ui,
+                            "Land",
+                            &format!("{} ({})", profile.geo_country, profile.country),
+                        );
+                        row(ui, "Stadt", &profile.geo_city);
+                        row(ui, "ISP", &profile.geo_isp);
+                        row(ui, "ASN", &format!("{} {}", profile.asn, profile.as_name));
+                        row(ui, "Flags", &profile.flags.join(", "));
+                        row(ui, "Bandwidth", &fmt_bytes(profile.bandwidth_rate));
+                        row(ui, "Uptime 30d", &format!("{:.1}%", profile.uptime * 100.0));
+                        row(
+                            ui,
+                            "Guard prob.",
+                            &format!("{:.4}", profile.guard_probability),
+                        );
+                        row(
+                            ui,
+                            "Exit prob.",
+                            &format!("{:.4}", profile.exit_probability),
+                        );
+                        row(ui, "First seen", &profile.first_seen);
+                        row(ui, "Platform", &profile.platform);
                         if let Some(ref abuse) = profile.abuse_contact {
                             row(ui, "Abuse-Mail", abuse);
                         }
@@ -324,10 +345,18 @@ fn render_report_builder(ui: &mut egui::Ui, state: &mut ArtishieldUiState) {
                 .selected_text(format!("{}", state.report_classification))
                 .show_ui(ui, |ui| {
                     use Classification::*;
-                    ui.selectable_value(&mut state.report_classification, Unclassified, "UNCLASSIFIED");
-                    ui.selectable_value(&mut state.report_classification, Internal,     "INTERNAL");
-                    ui.selectable_value(&mut state.report_classification, Restricted,   "RESTRICTED");
-                    ui.selectable_value(&mut state.report_classification, Confidential, "CONFIDENTIAL");
+                    ui.selectable_value(
+                        &mut state.report_classification,
+                        Unclassified,
+                        "UNCLASSIFIED",
+                    );
+                    ui.selectable_value(&mut state.report_classification, Internal, "INTERNAL");
+                    ui.selectable_value(&mut state.report_classification, Restricted, "RESTRICTED");
+                    ui.selectable_value(
+                        &mut state.report_classification,
+                        Confidential,
+                        "CONFIDENTIAL",
+                    );
                 });
             ui.end_row();
 
@@ -353,13 +382,22 @@ fn render_report_builder(ui: &mut egui::Ui, state: &mut ArtishieldUiState) {
     ui.horizontal(|ui| {
         let can_export = !state.report_events.is_empty() || !state.report_relays.is_empty();
 
-        if ui.add_enabled(can_export, egui::Button::new("HTML exportieren")).clicked() {
+        if ui
+            .add_enabled(can_export, egui::Button::new("HTML exportieren"))
+            .clicked()
+        {
             export_report(state, false);
         }
-        if ui.add_enabled(can_export, egui::Button::new("JSON exportieren")).clicked() {
+        if ui
+            .add_enabled(can_export, egui::Button::new("JSON exportieren"))
+            .clicked()
+        {
             export_report(state, true);
         }
-        if ui.add_enabled(can_export, egui::Button::new("In DB speichern")).clicked() {
+        if ui
+            .add_enabled(can_export, egui::Button::new("In DB speichern"))
+            .clicked()
+        {
             save_report_to_db(state);
         }
         if ui.button("Sitzung zurücksetzen").clicked() {
@@ -383,58 +421,77 @@ fn render_report_builder(ui: &mut egui::Ui, state: &mut ArtishieldUiState) {
 }
 
 fn export_report(state: &mut ArtishieldUiState, json: bool) {
-    let ev_db  = std::path::PathBuf::from("evidence.db");
+    let ev_db = std::path::PathBuf::from("evidence.db");
     let ev_key = std::path::PathBuf::from("evidence.key");
-    let store  = match crate::evidence::EvidenceStore::open(&ev_db, &ev_key) {
-        Ok(s)  => s,
-        Err(e) => { state.report_status = format!("✗ DB-Fehler: {e}"); return; }
+    let store = match crate::evidence::EvidenceStore::open(&ev_db, &ev_key) {
+        Ok(s) => s,
+        Err(e) => {
+            state.report_status = format!("✗ DB-Fehler: {e}");
+            return;
+        }
     };
 
     let builder = build_report_builder(state);
     let report = match builder.build(&store) {
-        Ok(r)  => r,
-        Err(e) => { state.report_status = format!("✗ Build-Fehler: {e}"); return; }
+        Ok(r) => r,
+        Err(e) => {
+            state.report_status = format!("✗ Build-Fehler: {e}");
+            return;
+        }
     };
 
-    let ts    = report.created_at.format("%Y%m%d_%H%M%S");
-    let base  = state.report_case_id
+    let ts = report.created_at.format("%Y%m%d_%H%M%S");
+    let base = state
+        .report_case_id
         .trim()
         .replace(|c: char| !c.is_alphanumeric() && c != '-', "_");
-    let base  = if base.is_empty() { "report".to_owned() } else { base };
+    let base = if base.is_empty() {
+        "report".to_owned()
+    } else {
+        base
+    };
 
     if json {
         let path = format!("{base}_{ts}.json");
         match std::fs::write(&path, report.to_json_pretty()) {
-            Ok(_)  => state.report_status = format!("✓ JSON: {path}"),
+            Ok(_) => state.report_status = format!("✓ JSON: {path}"),
             Err(e) => state.report_status = format!("✗ {e}"),
         }
     } else {
         let path = format!("{base}_{ts}.html");
         match std::fs::write(&path, report.to_html()) {
-            Ok(_)  => state.report_status = format!("✓ HTML: {path}"),
+            Ok(_) => state.report_status = format!("✓ HTML: {path}"),
             Err(e) => state.report_status = format!("✗ {e}"),
         }
     }
 }
 
 fn save_report_to_db(state: &mut ArtishieldUiState) {
-    let ev_db  = std::path::PathBuf::from("evidence.db");
+    let ev_db = std::path::PathBuf::from("evidence.db");
     let ev_key = std::path::PathBuf::from("evidence.key");
-    let store  = match crate::evidence::EvidenceStore::open(&ev_db, &ev_key) {
-        Ok(s)  => s,
-        Err(e) => { state.report_status = format!("✗ DB-Fehler: {e}"); return; }
+    let store = match crate::evidence::EvidenceStore::open(&ev_db, &ev_key) {
+        Ok(s) => s,
+        Err(e) => {
+            state.report_status = format!("✗ DB-Fehler: {e}");
+            return;
+        }
     };
     let builder = build_report_builder(state);
-    let report  = match builder.build(&store) {
-        Ok(r)  => r,
-        Err(e) => { state.report_status = format!("✗ Build-Fehler: {e}"); return; }
+    let report = match builder.build(&store) {
+        Ok(r) => r,
+        Err(e) => {
+            state.report_status = format!("✗ Build-Fehler: {e}");
+            return;
+        }
     };
     let id_short = report.id.to_string()[..8].to_owned();
     match store.save(&report) {
-        Ok(_)  => state.report_status = format!(
-            "✓ In evidence.db gespeichert (ID: {id_short}…, Hash: {}…)",
-            &report.content_hash[..12]
-        ),
+        Ok(_) => {
+            state.report_status = format!(
+                "✓ In evidence.db gespeichert (ID: {id_short}…, Hash: {}…)",
+                &report.content_hash[..12]
+            )
+        }
         Err(e) => state.report_status = format!("✗ Speicherfehler: {e}"),
     }
 }
@@ -490,11 +547,11 @@ fn fmt_bytes(bps: u64) -> String {
 
 fn level_color(level: u8) -> egui::Color32 {
     match level {
-        4 => egui::Color32::from_rgb(255, 60,  60),  // Critical
-        3 => egui::Color32::from_rgb(255, 160, 30),  // High
-        2 => egui::Color32::from_rgb(240, 220, 30),  // Medium
-        1 => egui::Color32::from_rgb(60,  190, 255), // Low
-        _ => egui::Color32::from_rgb(60,  255, 120), // Info
+        4 => egui::Color32::from_rgb(255, 60, 60),  // Critical
+        3 => egui::Color32::from_rgb(255, 160, 30), // High
+        2 => egui::Color32::from_rgb(240, 220, 30), // Medium
+        1 => egui::Color32::from_rgb(60, 190, 255), // Low
+        _ => egui::Color32::from_rgb(60, 255, 120), // Info
     }
 }
 

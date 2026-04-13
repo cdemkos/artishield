@@ -53,11 +53,11 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cli    = Cli::parse();
+    let cli = Cli::parse();
     let config = ShieldConfig::load(&cli.config)?;
 
-    let log_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&config.log_level));
+    let log_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
 
     if cli.json_logs {
         tracing_subscriber::registry()
@@ -90,13 +90,16 @@ async fn main() -> anyhow::Result<()> {
                 println!("No events stored yet.");
             } else {
                 for e in &events {
-                    println!("[{}] {:8} {:.2}  {}", e.timestamp, e.level, e.anomaly_score, e.message);
+                    println!(
+                        "[{}] {:8} {:.2}  {}",
+                        e.timestamp, e.level, e.anomaly_score, e.message
+                    );
                 }
             }
             return Ok(());
         }
         Some(Command::DumpRelays { threshold }) => {
-            let store  = artishield::storage::ReputationStore::open(&config.db_path)?;
+            let store = artishield::storage::ReputationStore::open(&config.db_path)?;
             let relays = store.suspicious_relays(threshold)?;
             if relays.is_empty() {
                 println!("No relays with score ≥ {threshold:.2}.");
@@ -109,17 +112,21 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Some(Command::ListReports) => {
-            let ev_db  = config.db_path.with_file_name("evidence.db");
+            let ev_db = config.db_path.with_file_name("evidence.db");
             let ev_key = config.db_path.with_file_name("evidence.key");
-            let store  = artishield::evidence::EvidenceStore::open(&ev_db, &ev_key)?;
-            let list   = store.list()?;
+            let store = artishield::evidence::EvidenceStore::open(&ev_db, &ev_key)?;
+            let list = store.list()?;
             if list.is_empty() {
                 println!("No evidence reports stored yet.");
             } else {
-                println!("{:<38} {:<26} {:<20} {}", "ID", "Created", "Case-ID", "Hash (16)");
+                println!(
+                    "{:<38} {:<26} {:<20} {}",
+                    "ID", "Created", "Case-ID", "Hash (16)"
+                );
                 println!("{}", "-".repeat(100));
                 for r in &list {
-                    println!("{:<38} {:<26} {:<20} {}",
+                    println!(
+                        "{:<38} {:<26} {:<20} {}",
                         r.id,
                         r.created_at,
                         r.case_id.as_deref().unwrap_or("—"),
@@ -131,22 +138,27 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Some(Command::VerifyChain) => {
-            let ev_db  = config.db_path.with_file_name("evidence.db");
+            let ev_db = config.db_path.with_file_name("evidence.db");
             let ev_key = config.db_path.with_file_name("evidence.key");
-            let store  = artishield::evidence::EvidenceStore::open(&ev_db, &ev_key)?;
+            let store = artishield::evidence::EvidenceStore::open(&ev_db, &ev_key)?;
             match store.verify_chain() {
-                Ok(n)  => println!("✓ Hash-Kette intakt — {n} Berichte verifiziert."),
-                Err(e) => { eprintln!("✗ Hash-Kette DEFEKT: {e:#}"); std::process::exit(1); }
+                Ok(n) => println!("✓ Hash-Kette intakt — {n} Berichte verifiziert."),
+                Err(e) => {
+                    eprintln!("✗ Hash-Kette DEFEKT: {e:#}");
+                    std::process::exit(1);
+                }
             }
             return Ok(());
         }
 
         Some(Command::ExportReport { id, out }) => {
-            let ev_db  = config.db_path.with_file_name("evidence.db");
+            let ev_db = config.db_path.with_file_name("evidence.db");
             let ev_key = config.db_path.with_file_name("evidence.key");
-            let store  = artishield::evidence::EvidenceStore::open(&ev_db, &ev_key)?;
+            let store = artishield::evidence::EvidenceStore::open(&ev_db, &ev_key)?;
             let reports = store.load_all()?;
-            let report = reports.iter().find(|r| r.id.to_string().starts_with(&id))
+            let report = reports
+                .iter()
+                .find(|r| r.id.to_string().starts_with(&id))
                 .ok_or_else(|| anyhow::anyhow!("Report '{id}' not found"))?;
             let out_path = out.unwrap_or_else(|| PathBuf::from(format!("{}.html", report.id)));
             std::fs::write(&out_path, report.to_html())?;

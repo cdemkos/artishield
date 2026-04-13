@@ -9,17 +9,14 @@
 use bevy::prelude::*;
 use bevy::reflect::TypeUuid;
 use bevy::render::extract_resource::ExtractResource;
-use bevy::render::render_graph::{
-    Node, NodeRunError, RenderGraph, RenderGraphContext,
-};
+use bevy::render::render_graph::{Node, NodeRunError, RenderGraph, RenderGraphContext};
 use bevy::render::render_resource::{
-    AddressMode, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlendState,
-    CachedPipelineState, CachedRenderPipelineId, ColorTargetState, ColorWrites, FilterMode,
-    FragmentState, LoadOp, MultisampleState, Operations, PipelineCache, PrimitiveState,
-    RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, Sampler,
-    SamplerBindingType, SamplerDescriptor, Shader, ShaderStages, TextureFormat,
-    TextureSampleType, TextureViewDimension, VertexState,
+    AddressMode, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
+    BindGroupLayoutEntry, BindingResource, BindingType, BlendState, CachedPipelineState,
+    CachedRenderPipelineId, ColorTargetState, ColorWrites, FilterMode, FragmentState, LoadOp,
+    MultisampleState, Operations, PipelineCache, PrimitiveState, RenderPassColorAttachment,
+    RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor,
+    Shader, ShaderStages, TextureFormat, TextureSampleType, TextureViewDimension, VertexState,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice};
 use bevy::render::texture::BevyDefault as _;
@@ -68,7 +65,11 @@ impl ArtishieldPipeline {
     /// Select the pipeline ID appropriate for this view's HDR setting.
     #[inline]
     pub fn pipeline_for(&self, hdr: bool) -> CachedRenderPipelineId {
-        if hdr { self.hdr_pipeline_id } else { self.pipeline_id }
+        if hdr {
+            self.hdr_pipeline_id
+        } else {
+            self.pipeline_id
+        }
     }
 }
 
@@ -192,7 +193,9 @@ pub struct ArtishieldPassNode {
 
 impl FromWorld for ArtishieldPassNode {
     fn from_world(world: &mut World) -> Self {
-        Self { query: world.query() }
+        Self {
+            query: world.query(),
+        }
     }
 }
 
@@ -213,9 +216,9 @@ impl Node for ArtishieldPassNode {
             return Ok(());
         }
 
-        let pipeline_res   = world.resource::<ArtishieldPipeline>();
+        let pipeline_res = world.resource::<ArtishieldPipeline>();
         let pipeline_cache = world.resource::<PipelineCache>();
-        let render_device  = world.resource::<RenderDevice>();
+        let render_device = world.resource::<RenderDevice>();
 
         for (entity, view_target, maybe_view) in self.query.iter_manual(world) {
             let hdr = maybe_view.map_or(false, |v| v.hdr);
@@ -257,7 +260,7 @@ impl Node for ArtishieldPassNode {
                 view: post_process.destination,
                 resolve_target: None,
                 ops: Operations {
-                    load:  LoadOp::Load,
+                    load: LoadOp::Load,
                     store: true,
                 },
             };
@@ -266,8 +269,8 @@ impl Node for ArtishieldPassNode {
                 render_context
                     .command_encoder()
                     .begin_render_pass(&RenderPassDescriptor {
-                        label:                    Some("artishield_fullscreen_pass"),
-                        color_attachments:        &[Some(color_attachment)],
+                        label: Some("artishield_fullscreen_pass"),
+                        color_attachments: &[Some(color_attachment)],
                         depth_stencil_attachment: None,
                     });
 

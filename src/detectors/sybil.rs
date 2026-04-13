@@ -23,7 +23,10 @@ use crate::{
     event::{ThreatEvent, ThreatKind, ThreatLevel},
 };
 use ipnet::Ipv4Net;
-use std::{collections::HashMap, net::{IpAddr, SocketAddr}};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+};
 use tracing::{debug, warn};
 
 // ── Public types ─────────────────────────────────────────────────────────────
@@ -34,11 +37,11 @@ pub struct CircuitHop {
     /// Hex-encoded RSA fingerprint of this relay.
     pub fingerprint: String,
     /// Known socket addresses of this relay.
-    pub addrs:       Vec<SocketAddr>,
+    pub addrs: Vec<SocketAddr>,
     /// `true` if this relay has the Guard flag.
-    pub is_guard:    bool,
+    pub is_guard: bool,
     /// `true` if this relay has the Exit flag.
-    pub is_exit:     bool,
+    pub is_exit: bool,
 }
 
 // ── Detector ─────────────────────────────────────────────────────────────────
@@ -47,9 +50,9 @@ pub struct CircuitHop {
 #[cfg_attr(not(feature = "arti-hooks"), allow(dead_code))]
 pub struct SybilDetector {
     config: ShieldConfig,
-    tx:     EventTx,
+    tx: EventTx,
     #[cfg(feature = "geoip")]
-    mmdb:   Option<maxminddb::Reader<Vec<u8>>>,
+    mmdb: Option<maxminddb::Reader<Vec<u8>>>,
 }
 
 impl SybilDetector {
@@ -62,7 +65,8 @@ impl SybilDetector {
                 .ok()
         });
         Self {
-            config, tx,
+            config,
+            tx,
             #[cfg(feature = "geoip")]
             mmdb,
         }
@@ -71,19 +75,22 @@ impl SybilDetector {
     fn prefix24(ip: IpAddr) -> Option<String> {
         match ip {
             IpAddr::V4(v4) => Ipv4Net::new(v4, 24).ok().map(|n| n.network().to_string()),
-            IpAddr::V6(_)  => None,
+            IpAddr::V6(_) => None,
         }
     }
 
     #[cfg(feature = "geoip")]
     fn asn_of(&self, ip: IpAddr) -> Option<u32> {
-        self.mmdb.as_ref()
+        self.mmdb
+            .as_ref()
             .and_then(|db| db.lookup::<maxminddb::geoip2::Asn<'_>>(ip).ok())
             .and_then(|r| r.autonomous_system_number)
     }
 
     #[cfg(not(feature = "geoip"))]
-    fn asn_of(&self, _ip: IpAddr) -> Option<u32> { None }
+    fn asn_of(&self, _ip: IpAddr) -> Option<u32> {
+        None
+    }
 
     /// Build subnet→fps and asn→fps maps from an iterator of (fingerprint, ips).
     fn build_maps(
@@ -91,7 +98,7 @@ impl SybilDetector {
         iter: impl Iterator<Item = (String, Vec<IpAddr>)>,
     ) -> (HashMap<String, Vec<String>>, HashMap<u32, Vec<String>>) {
         let mut subnet_map: HashMap<String, Vec<String>> = HashMap::new();
-        let mut asn_map:    HashMap<u32,    Vec<String>> = HashMap::new();
+        let mut asn_map: HashMap<u32, Vec<String>> = HashMap::new();
         for (fp, ips) in iter {
             for ip in ips {
                 if let Some(pfx) = Self::prefix24(ip) {
@@ -111,10 +118,15 @@ impl SybilDetector {
     ///
     /// Returns a `ThreatEvent` on the first collision found, or `None` if the circuit looks clean.
     pub fn check_hops(&self, hops: &[CircuitHop]) -> Option<ThreatEvent> {
-        if hops.len() < 2 { return None; }
+        if hops.len() < 2 {
+            return None;
+        }
 
         let iter = hops.iter().map(|h| {
-            (h.fingerprint.clone(), h.addrs.iter().map(|a| a.ip()).collect())
+            (
+                h.fingerprint.clone(),
+                h.addrs.iter().map(|a| a.ip()).collect(),
+            )
         });
         let (subnet_map, asn_map) = self.build_maps(iter);
 
@@ -124,9 +136,9 @@ impl SybilDetector {
                 return Some(ThreatEvent::new(
                     ThreatLevel::High,
                     ThreatKind::SybilCluster {
-                        shared_asn:    None,
+                        shared_asn: None,
                         shared_prefix: Some(pfx.clone()),
-                        affected_fps:  fps.clone(),
+                        affected_fps: fps.clone(),
                     },
                     format!("Circuit: {} hops share /24 {pfx}", fps.len()),
                     0.85,
@@ -141,9 +153,9 @@ impl SybilDetector {
                 return Some(ThreatEvent::new(
                     ThreatLevel::High,
                     ThreatKind::SybilCluster {
-                        shared_asn:    Some(asn),
+                        shared_asn: Some(asn),
                         shared_prefix: None,
-                        affected_fps:  fps.clone(),
+                        affected_fps: fps.clone(),
                     },
                     format!("Circuit: {} hops from AS{asn}", fps.len()),
                     0.75,
@@ -164,8 +176,12 @@ impl SybilDetector {
         use tor_linkspec::HasAddrs as _;
 
         let iter = netdir.relays().map(|relay| {
-            let fp  = relay.rsa_id().as_bytes()
-                .iter().map(|b| format!("{b:02X}")).collect::<String>();
+            let fp = relay
+                .rsa_id()
+                .as_bytes()
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect::<String>();
             let ips = relay.addrs().map(|a| a.ip()).collect::<Vec<_>>();
             (fp, ips)
         });
@@ -176,11 +192,16 @@ impl SybilDetector {
         for (pfx, fps) in &subnet_map {
             if fps.len() >= 3 {
                 let score = (fps.len() as f64 / 10.0).min(1.0);
-                let level = if fps.len() >= 8 { ThreatLevel::Critical }
-                            else if fps.len() >= 5 { ThreatLevel::High }
-                            else                   { ThreatLevel::Medium };
+                let level = if fps.len() >= 8 {
+                    ThreatLevel::Critical
+                } else if fps.len() >= 5 {
+                    ThreatLevel::High
+                } else {
+                    ThreatLevel::Medium
+                };
                 warn!(prefix = pfx, count = fps.len(), "Sybil/NetDir: /24 cluster");
-                out.push(ThreatEvent::new(level,
+                out.push(ThreatEvent::new(
+                    level,
                     ThreatKind::SybilCluster {
                         shared_asn: None,
                         shared_prefix: Some(pfx.clone()),
@@ -198,13 +219,18 @@ impl SybilDetector {
             if fps.len() >= asn_threshold {
                 let pct = fps.len() as f64 / total as f64;
                 warn!(asn, count = fps.len(), "Sybil/NetDir: ASN concentration");
-                out.push(ThreatEvent::new(ThreatLevel::Medium,
+                out.push(ThreatEvent::new(
+                    ThreatLevel::Medium,
                     ThreatKind::SybilCluster {
                         shared_asn: Some(asn),
                         shared_prefix: None,
                         affected_fps: fps.iter().take(20).cloned().collect(),
                     },
-                    format!("Sybil: {} relays ({:.1}%) from AS{asn}", fps.len(), pct*100.0),
+                    format!(
+                        "Sybil: {} relays ({:.1}%) from AS{asn}",
+                        fps.len(),
+                        pct * 100.0
+                    ),
                     (pct * 5.0).min(0.9),
                     vec!["entry_ip_filter".into()],
                 ));
@@ -229,7 +255,9 @@ impl SybilDetector {
 
         if let Ok(nd) = dirmgr.netdir(Timeliness::Timely) {
             info!("SybilDetector: initial scan {} relays", nd.relays().count());
-            for evt in self.analyse_netdir(&nd) { let _ = self.tx.send(evt); }
+            for evt in self.analyse_netdir(&nd) {
+                let _ = self.tx.send(evt);
+            }
         }
 
         let mut stream = dirmgr.events();
@@ -237,12 +265,17 @@ impl SybilDetector {
             match stream.next().await {
                 Some(DirEvent::NewConsensus) => {
                     if let Ok(nd) = dirmgr.netdir(Timeliness::Timely) {
-                        for evt in self.analyse_netdir(&nd) { let _ = self.tx.send(evt); }
+                        for evt in self.analyse_netdir(&nd) {
+                            let _ = self.tx.send(evt);
+                        }
                     }
                 }
                 // DirEvent is #[non_exhaustive] — must have wildcard arm
                 Some(_) => {}
-                None    => { warn!("SybilDetector: stream closed"); break; }
+                None => {
+                    warn!("SybilDetector: stream closed");
+                    break;
+                }
             }
         }
     }
@@ -262,29 +295,37 @@ mod tests {
         CircuitHop {
             fingerprint: fp.into(),
             addrs: vec![format!("{ip}:443").parse().unwrap()],
-            is_guard: guard, is_exit: exit,
+            is_guard: guard,
+            is_exit: exit,
         }
     }
 
     #[test]
     fn clean_circuit() {
-        assert!(det().check_hops(&[
-            hop("1.2.3.4",    "AA", true,  false),
-            hop("5.6.7.8",    "BB", false, false),
-            hop("9.10.11.12", "CC", false, true),
-        ]).is_none());
+        assert!(det()
+            .check_hops(&[
+                hop("1.2.3.4", "AA", true, false),
+                hop("5.6.7.8", "BB", false, false),
+                hop("9.10.11.12", "CC", false, true),
+            ])
+            .is_none());
     }
 
     #[test]
     fn subnet_collision() {
         let evt = det().check_hops(&[
-            hop("198.51.100.1",   "AA", true,  false),
-            hop("5.6.7.8",        "BB", false, false),
+            hop("198.51.100.1", "AA", true, false),
+            hop("5.6.7.8", "BB", false, false),
             hop("198.51.100.200", "CC", false, true),
         ]);
         assert!(evt.is_some());
-        assert!(matches!(evt.unwrap().kind,
-            ThreatKind::SybilCluster { shared_prefix: Some(_), .. }));
+        assert!(matches!(
+            evt.unwrap().kind,
+            ThreatKind::SybilCluster {
+                shared_prefix: Some(_),
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -294,25 +335,34 @@ mod tests {
 
     #[test]
     fn single_hop_clean() {
-        assert!(det().check_hops(&[hop("1.2.3.4", "AA", true, false)]).is_none());
+        assert!(det()
+            .check_hops(&[hop("1.2.3.4", "AA", true, false)])
+            .is_none());
     }
 
     #[test]
     fn mitigation_suggested() {
-        let evt = det().check_hops(&[
-            hop("198.51.100.1",   "A", true,  false),
-            hop("5.6.7.8",        "B", false, false),
-            hop("198.51.100.200", "C", false, true),
-        ]).unwrap();
-        assert!(evt.suggested_mitigations.iter().any(|m| m.contains("circuit_rotate")));
+        let evt = det()
+            .check_hops(&[
+                hop("198.51.100.1", "A", true, false),
+                hop("5.6.7.8", "B", false, false),
+                hop("198.51.100.200", "C", false, true),
+            ])
+            .unwrap();
+        assert!(evt
+            .suggested_mitigations
+            .iter()
+            .any(|m| m.contains("circuit_rotate")));
     }
 
     #[test]
     fn different_slash24_same_slash16_clean() {
-        assert!(det().check_hops(&[
-            hop("203.0.113.10", "A", true,  false),
-            hop("203.0.114.10", "B", false, false),
-            hop("198.51.100.1", "C", false, true),
-        ]).is_none());
+        assert!(det()
+            .check_hops(&[
+                hop("203.0.113.10", "A", true, false),
+                hop("203.0.114.10", "B", false, false),
+                hop("198.51.100.1", "C", false, true),
+            ])
+            .is_none());
     }
 }

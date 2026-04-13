@@ -18,7 +18,10 @@ use std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, time};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    time,
+};
 use tokio_socks::tcp::Socks5Stream;
 use tracing::{debug, info, warn};
 
@@ -27,12 +30,12 @@ use tracing::{debug, info, warn};
 /// p95 connect latency must exceed `BASELINE_MULTIPLIER × baseline` to trigger an alert.
 pub const BASELINE_MULTIPLIER: f64 = 3.0;
 /// Minimum number of probe samples before establishing a baseline or emitting alerts.
-pub const MIN_SAMPLES:         usize = 10;
+pub const MIN_SAMPLES: usize = 10;
 
-const LAT_WINDOW:     usize    = 30;
-const PROBE_HOST:     &str     = "example.com:80";
-const PROBE_REQ:      &[u8]    = b"GET / HTTP/1.0\r\nHost: example.com\r\nConnection: close\r\n\r\n";
-const PROBE_TIMEOUT:  Duration = Duration::from_secs(25);
+const LAT_WINDOW: usize = 30;
+const PROBE_HOST: &str = "example.com:80";
+const PROBE_REQ: &[u8] = b"GET / HTTP/1.0\r\nHost: example.com\r\nConnection: close\r\n\r\n";
+const PROBE_TIMEOUT: Duration = Duration::from_secs(25);
 const PROBE_INTERVAL: Duration = Duration::from_secs(10);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -40,7 +43,7 @@ const PROBE_INTERVAL: Duration = Duration::from_secs(10);
 #[derive(Debug, Clone, Copy)]
 struct LatSample {
     connect_ms: f64,
-    ttfb_ms:    f64,
+    ttfb_ms: f64,
 }
 
 // ── Detector ─────────────────────────────────────────────────────────────────
@@ -48,11 +51,11 @@ struct LatSample {
 /// Detects circuit-stuffing and SENDME-burst DoS attacks via SOCKS5 latency probes.
 pub struct DosDetector {
     #[allow(dead_code)]
-    config:     ShieldConfig,
-    tx:         EventTx,
+    config: ShieldConfig,
+    tx: EventTx,
     socks_addr: SocketAddr,
-    samples:    VecDeque<LatSample>,
-    baseline:   Option<f64>,
+    samples: VecDeque<LatSample>,
+    baseline: Option<f64>,
 }
 
 impl DosDetector {
@@ -62,7 +65,7 @@ impl DosDetector {
             config,
             tx,
             socks_addr,
-            samples:  VecDeque::with_capacity(LAT_WINDOW + 1),
+            samples: VecDeque::with_capacity(LAT_WINDOW + 1),
             baseline: None,
         }
     }
@@ -81,7 +84,10 @@ impl DosDetector {
             let mut buf = [0u8; 1];
             s.read_exact(&mut buf).await.map_err(|_| ())?;
             let ttfb_ms = t0.elapsed().as_secs_f64() * 1000.0;
-            Ok::<_, ()>(LatSample { connect_ms, ttfb_ms })
+            Ok::<_, ()>(LatSample {
+                connect_ms,
+                ttfb_ms,
+            })
         })
         .await;
         match result {
@@ -94,14 +100,18 @@ impl DosDetector {
 
     fn median(vals: &mut Vec<f64>) -> f64 {
         vals.retain(|v| v.is_finite());
-        if vals.is_empty() { return 0.0; }
+        if vals.is_empty() {
+            return 0.0;
+        }
         vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         vals[vals.len() / 2]
     }
 
     fn p95(vals: &mut Vec<f64>) -> f64 {
         vals.retain(|v| v.is_finite());
-        if vals.is_empty() { return 0.0; }
+        if vals.is_empty() {
+            return 0.0;
+        }
         vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let idx = ((vals.len() as f64 * 0.95) as usize).min(vals.len() - 1);
         vals[idx]
@@ -109,9 +119,13 @@ impl DosDetector {
 
     fn cov(xs: &[f64]) -> f64 {
         let n = xs.len() as f64;
-        if n < 2.0 { return 0.0; }
+        if n < 2.0 {
+            return 0.0;
+        }
         let mean = xs.iter().sum::<f64>() / n;
-        if mean < 1e-9 { return 0.0; }
+        if mean < 1e-9 {
+            return 0.0;
+        }
         let var = xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n;
         var.sqrt() / mean
     }
@@ -120,7 +134,9 @@ impl DosDetector {
 
     fn analyse(&mut self) -> Vec<ThreatEvent> {
         let n = self.samples.len();
-        if n < MIN_SAMPLES { return vec![]; }
+        if n < MIN_SAMPLES {
+            return vec![];
+        }
 
         let mut connect_vals: Vec<f64> = self.samples.iter().map(|s| s.connect_ms).collect();
         let median_ms = Self::median(&mut connect_vals.clone());
@@ -128,7 +144,10 @@ impl DosDetector {
         // Establish baseline from first MIN_SAMPLES, then keep it stable
         if self.baseline.is_none() {
             self.baseline = Some(median_ms);
-            info!(baseline_ms = format!("{median_ms:.0}"), "DoS: baseline established");
+            info!(
+                baseline_ms = format!("{median_ms:.0}"),
+                "DoS: baseline established"
+            );
             return vec![];
         }
 
@@ -137,24 +156,28 @@ impl DosDetector {
 
         // ── Circuit-stuffing: p95 > BASELINE_MULTIPLIER × baseline ───────────
         let p95_ms = Self::p95(&mut connect_vals);
-        let ratio  = p95_ms / baseline.max(1.0);
+        let ratio = p95_ms / baseline.max(1.0);
 
         if ratio >= BASELINE_MULTIPLIER {
             let score = ((ratio - BASELINE_MULTIPLIER) / BASELINE_MULTIPLIER).min(1.0);
-            let level = if ratio >= 6.0 { ThreatLevel::Critical }
-                        else if ratio >= 4.0 { ThreatLevel::High }
-                        else { ThreatLevel::Medium };
+            let level = if ratio >= 6.0 {
+                ThreatLevel::Critical
+            } else if ratio >= 4.0 {
+                ThreatLevel::High
+            } else {
+                ThreatLevel::Medium
+            };
             warn!(
-                p95_ms    = format!("{p95_ms:.0}"),
-                baseline  = format!("{baseline:.0}"),
-                ratio     = format!("{ratio:.1}x"),
+                p95_ms = format!("{p95_ms:.0}"),
+                baseline = format!("{baseline:.0}"),
+                ratio = format!("{ratio:.1}x"),
                 "DoS: circuit-build latency spike"
             );
             events.push(ThreatEvent::new(
                 level,
                 ThreatKind::DenialOfService {
-                    sendme_rate:  0,
-                    queue_depth:  n,
+                    sendme_rate: 0,
+                    queue_depth: n,
                     source_relay: None,
                 },
                 format!(
@@ -170,12 +193,15 @@ impl DosDetector {
         let ttfbs: Vec<f64> = self.samples.iter().map(|s| s.ttfb_ms).collect();
         let cov_val = Self::cov(&ttfbs);
         if cov_val > 1.5 {
-            debug!(cov = format!("{cov_val:.2}"), "DoS: high TTFB CoV — possible SENDME burst");
+            debug!(
+                cov = format!("{cov_val:.2}"),
+                "DoS: high TTFB CoV — possible SENDME burst"
+            );
             events.push(ThreatEvent::new(
                 ThreatLevel::Low,
                 ThreatKind::DenialOfService {
-                    sendme_rate:  0,
-                    queue_depth:  0,
+                    sendme_rate: 0,
+                    queue_depth: 0,
                     source_relay: None,
                 },
                 format!("DoS: TTFB CoV={cov_val:.2} — bursty delivery"),
@@ -199,7 +225,7 @@ impl DosDetector {
             if let Some(sample) = self.probe().await {
                 debug!(
                     connect_ms = format!("{:.0}", sample.connect_ms),
-                    ttfb_ms    = format!("{:.0}", sample.ttfb_ms),
+                    ttfb_ms = format!("{:.0}", sample.ttfb_ms),
                     "DoS probe ok"
                 );
                 if self.samples.len() >= LAT_WINDOW {
@@ -225,12 +251,19 @@ mod tests {
 
     fn det() -> DosDetector {
         let (tx, _) = broadcast::channel(64);
-        DosDetector::new(ShieldConfig::default(), tx, "127.0.0.1:9150".parse().unwrap())
+        DosDetector::new(
+            ShieldConfig::default(),
+            tx,
+            "127.0.0.1:9150".parse().unwrap(),
+        )
     }
 
     fn push(d: &mut DosDetector, ms: &[f64]) {
         for &m in ms {
-            d.samples.push_back(LatSample { connect_ms: m, ttfb_ms: m * 1.5 });
+            d.samples.push_back(LatSample {
+                connect_ms: m,
+                ttfb_ms: m * 1.5,
+            });
         }
     }
 
@@ -278,7 +311,9 @@ mod tests {
 
     #[test]
     fn cov_variable_high() {
-        let xs = vec![10.0, 500.0, 20.0, 800.0, 5.0, 300.0, 50.0, 600.0, 15.0, 400.0];
+        let xs = vec![
+            10.0, 500.0, 20.0, 800.0, 5.0, 300.0, 50.0, 600.0, 15.0, 400.0,
+        ];
         assert!(DosDetector::cov(&xs) > 1.0);
     }
 }

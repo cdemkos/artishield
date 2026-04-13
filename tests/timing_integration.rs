@@ -13,13 +13,17 @@
 fn pearson(xs: &[f64], ys: &[f64]) -> f64 {
     let n = xs.len();
     assert_eq!(n, ys.len());
-    if n < 2 { return 0.0; }
+    if n < 2 {
+        return 0.0;
+    }
     let mx = xs.iter().sum::<f64>() / n as f64;
     let my = ys.iter().sum::<f64>() / n as f64;
     let num: f64 = xs.iter().zip(ys).map(|(x, y)| (x - mx) * (y - my)).sum();
-    let dx:  f64 = xs.iter().map(|x| (x - mx).powi(2)).sum::<f64>().sqrt();
-    let dy:  f64 = ys.iter().map(|y| (y - my).powi(2)).sum::<f64>().sqrt();
-    if dx < 1e-9 || dy < 1e-9 { return 0.0; }
+    let dx: f64 = xs.iter().map(|x| (x - mx).powi(2)).sum::<f64>().sqrt();
+    let dy: f64 = ys.iter().map(|y| (y - my).powi(2)).sum::<f64>().sqrt();
+    if dx < 1e-9 || dy < 1e-9 {
+        return 0.0;
+    }
     (num / (dx * dy)).clamp(-1.0, 1.0)
 }
 
@@ -57,9 +61,13 @@ fn pearson_uncorrelated_near_zero() {
 fn pearson_with_noise_still_high() {
     // Correlated series with 20% noise should still give high r
     let xs: Vec<f64> = (0..200).map(|i| i as f64).collect();
-    let ys: Vec<f64> = xs.iter().enumerate().map(|(i, x)| {
-        x + if i % 5 == 0 { 10.0 } else { 0.0 } // 20% outliers
-    }).collect();
+    let ys: Vec<f64> = xs
+        .iter()
+        .enumerate()
+        .map(|(i, x)| {
+            x + if i % 5 == 0 { 10.0 } else { 0.0 } // 20% outliers
+        })
+        .collect();
     let r = pearson(&xs, &ys);
     assert!(r > 0.95, "Expected high r despite noise, got {r}");
 }
@@ -118,7 +126,10 @@ fn threshold_06_passes_with_high_r() {
 fn threshold_06_blocked_with_low_r() {
     let threshold = 0.6f64;
     let r = 0.3f64;
-    assert!(r.abs() < threshold, "r=0.3 should not trigger threshold 0.6");
+    assert!(
+        r.abs() < threshold,
+        "r=0.3 should not trigger threshold 0.6"
+    );
 }
 
 // ── Level mapping ─────────────────────────────────────────────────────────────
@@ -127,9 +138,13 @@ fn threshold_06_blocked_with_low_r() {
 fn level_from_prob() {
     use artishield::event::ThreatLevel;
     let level = |prob: f64| -> ThreatLevel {
-        if prob >= 0.85 { ThreatLevel::Critical }
-        else if prob >= 0.65 { ThreatLevel::High }
-        else { ThreatLevel::Medium }
+        if prob >= 0.85 {
+            ThreatLevel::Critical
+        } else if prob >= 0.65 {
+            ThreatLevel::High
+        } else {
+            ThreatLevel::Medium
+        }
     };
 
     assert_eq!(level(0.90), ThreatLevel::Critical);

@@ -7,8 +7,8 @@
 //! * ip-api.com geolocation for the relay's first OR-address
 //! * RDAP / ARIN lookup for ASN abuse contact info
 
-use std::net::IpAddr;
 use serde::Deserialize;
+use std::net::IpAddr;
 use tracing::{debug, warn};
 
 // ── Onionoo ───────────────────────────────────────────────────────────────────
@@ -73,34 +73,34 @@ struct OnionooResponse {
 
 #[derive(Deserialize)]
 struct OnionooRelay {
-    fingerprint:          Option<String>,
-    nickname:             Option<String>,
-    or_addresses:         Option<Vec<String>>,
-    country:              Option<String>,
+    fingerprint: Option<String>,
+    nickname: Option<String>,
+    or_addresses: Option<Vec<String>>,
+    country: Option<String>,
     #[serde(rename = "as")]
-    asn:                  Option<String>,
-    as_name:              Option<String>,
-    flags:                Option<Vec<String>>,
-    bandwidth_rate:       Option<u64>,
-    uptime:               Option<f64>,
-    first_seen:           Option<String>,
-    last_seen:            Option<String>,
-    platform:             Option<String>,
-    contact:              Option<String>,
-    guard_probability:    Option<f64>,
-    exit_probability:     Option<f64>,
-    family_fingerprints:  Option<Vec<String>>,
+    asn: Option<String>,
+    as_name: Option<String>,
+    flags: Option<Vec<String>>,
+    bandwidth_rate: Option<u64>,
+    uptime: Option<f64>,
+    first_seen: Option<String>,
+    last_seen: Option<String>,
+    platform: Option<String>,
+    contact: Option<String>,
+    guard_probability: Option<f64>,
+    exit_probability: Option<f64>,
+    family_fingerprints: Option<Vec<String>>,
 }
 
 // ── ip-api.com ────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct IpApiResponse {
-    country:     Option<String>,
-    city:        Option<String>,
-    isp:         Option<String>,
-    lat:         Option<f64>,
-    lon:         Option<f64>,
+    country: Option<String>,
+    city: Option<String>,
+    isp: Option<String>,
+    lat: Option<f64>,
+    lon: Option<f64>,
 }
 
 // ── RDAP ──────────────────────────────────────────────────────────────────────
@@ -168,7 +168,8 @@ pub async fn lookup_relay(fingerprint: &str) -> anyhow::Result<RelayProfile> {
         ..Default::default()
     });
 
-    let or_address = relay.or_addresses
+    let or_address = relay
+        .or_addresses
         .as_ref()
         .and_then(|v| v.first())
         .cloned()
@@ -183,9 +184,7 @@ pub async fn lookup_relay(fingerprint: &str) -> anyhow::Result<RelayProfile> {
     let (geo, rdap_email) = tokio::join!(
         async {
             let Some(ip) = ip else { return None };
-            let geo_url = format!(
-                "https://ip-api.com/json/{ip}?fields=country,city,isp,lat,lon"
-            );
+            let geo_url = format!("https://ip-api.com/json/{ip}?fields=country,city,isp,lat,lon");
             client
                 .get(&geo_url)
                 .timeout(std::time::Duration::from_secs(6))
@@ -208,36 +207,45 @@ pub async fn lookup_relay(fingerprint: &str) -> anyhow::Result<RelayProfile> {
                 .json::<RdapResponse>()
                 .await;
             match resp {
-                Ok(r)  => extract_rdap_abuse_email(&r),
-                Err(e) => { warn!("RDAP parse error: {e}"); None }
+                Ok(r) => extract_rdap_abuse_email(&r),
+                Err(e) => {
+                    warn!("RDAP parse error: {e}");
+                    None
+                }
             }
         }
     );
 
     Ok(RelayProfile {
-        fingerprint:         relay.fingerprint.unwrap_or_else(|| fingerprint.to_owned()),
-        nickname:            relay.nickname.unwrap_or_default(),
-        or_address:          or_address.clone(),
+        fingerprint: relay.fingerprint.unwrap_or_else(|| fingerprint.to_owned()),
+        nickname: relay.nickname.unwrap_or_default(),
+        or_address: or_address.clone(),
         ip,
-        country:             relay.country.unwrap_or_default(),
-        asn:                 relay.asn.unwrap_or_default(),
-        as_name:             relay.as_name.unwrap_or_default(),
-        flags:               relay.flags.unwrap_or_default(),
-        bandwidth_rate:      relay.bandwidth_rate.unwrap_or_default(),
-        uptime:              relay.uptime.unwrap_or_default(),
-        first_seen:          relay.first_seen.unwrap_or_default(),
-        last_seen:           relay.last_seen.unwrap_or_default(),
-        platform:            relay.platform.unwrap_or_default(),
-        contact:             relay.contact.unwrap_or_default(),
-        guard_probability:   relay.guard_probability.unwrap_or_default(),
-        exit_probability:    relay.exit_probability.unwrap_or_default(),
+        country: relay.country.unwrap_or_default(),
+        asn: relay.asn.unwrap_or_default(),
+        as_name: relay.as_name.unwrap_or_default(),
+        flags: relay.flags.unwrap_or_default(),
+        bandwidth_rate: relay.bandwidth_rate.unwrap_or_default(),
+        uptime: relay.uptime.unwrap_or_default(),
+        first_seen: relay.first_seen.unwrap_or_default(),
+        last_seen: relay.last_seen.unwrap_or_default(),
+        platform: relay.platform.unwrap_or_default(),
+        contact: relay.contact.unwrap_or_default(),
+        guard_probability: relay.guard_probability.unwrap_or_default(),
+        exit_probability: relay.exit_probability.unwrap_or_default(),
         family_fingerprints: relay.family_fingerprints.unwrap_or_default(),
-        geo_country:         geo.as_ref().and_then(|g| g.country.clone()).unwrap_or_default(),
-        geo_city:            geo.as_ref().and_then(|g| g.city.clone()).unwrap_or_default(),
-        geo_isp:             geo.as_ref().and_then(|g| g.isp.clone()).unwrap_or_default(),
-        geo_lat:             geo.as_ref().and_then(|g| g.lat).unwrap_or_default(),
-        geo_lon:             geo.as_ref().and_then(|g| g.lon).unwrap_or_default(),
-        abuse_contact:       rdap_email,
+        geo_country: geo
+            .as_ref()
+            .and_then(|g| g.country.clone())
+            .unwrap_or_default(),
+        geo_city: geo
+            .as_ref()
+            .and_then(|g| g.city.clone())
+            .unwrap_or_default(),
+        geo_isp: geo.as_ref().and_then(|g| g.isp.clone()).unwrap_or_default(),
+        geo_lat: geo.as_ref().and_then(|g| g.lat).unwrap_or_default(),
+        geo_lon: geo.as_ref().and_then(|g| g.lon).unwrap_or_default(),
+        abuse_contact: rdap_email,
     })
 }
 
@@ -246,11 +254,21 @@ pub async fn lookup_relay(fingerprint: &str) -> anyhow::Result<RelayProfile> {
 impl Default for OnionooRelay {
     fn default() -> Self {
         Self {
-            fingerprint: None, nickname: None, or_addresses: None,
-            country: None, asn: None, as_name: None, flags: None,
-            bandwidth_rate: None, uptime: None, first_seen: None,
-            last_seen: None, platform: None, contact: None,
-            guard_probability: None, exit_probability: None,
+            fingerprint: None,
+            nickname: None,
+            or_addresses: None,
+            country: None,
+            asn: None,
+            as_name: None,
+            flags: None,
+            bandwidth_rate: None,
+            uptime: None,
+            first_seen: None,
+            last_seen: None,
+            platform: None,
+            contact: None,
+            guard_probability: None,
+            exit_probability: None,
             family_fingerprints: None,
         }
     }

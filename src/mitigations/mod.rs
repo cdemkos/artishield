@@ -25,8 +25,8 @@ use tracing::{info, warn};
 pub struct MitigationEngine {
     #[allow(dead_code)]
     config: ShieldConfig,
-    rx:     broadcast::Receiver<ThreatEvent>,
-    store:  Arc<ReputationStore>,
+    rx: broadcast::Receiver<ThreatEvent>,
+    store: Arc<ReputationStore>,
 }
 
 #[cfg(not(feature = "arti-hooks"))]
@@ -34,8 +34,8 @@ impl MitigationEngine {
     /// Create a new `MitigationEngine` subscribed to `rx`.
     pub fn new(
         config: ShieldConfig,
-        rx:     broadcast::Receiver<ThreatEvent>,
-        store:  Arc<ReputationStore>,
+        rx: broadcast::Receiver<ThreatEvent>,
+        store: Arc<ReputationStore>,
     ) -> Self {
         Self { config, rx, store }
     }
@@ -45,7 +45,7 @@ impl MitigationEngine {
         info!("MitigationEngine started (no-arti-hooks mode)");
         loop {
             match self.rx.recv().await {
-                Ok(evt)  => self.update_reputation(&evt),
+                Ok(evt) => self.update_reputation(&evt),
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     warn!(n, "MitigationEngine lagged");
                 }
@@ -56,9 +56,16 @@ impl MitigationEngine {
 
     fn update_reputation(&self, evt: &ThreatEvent) {
         match &evt.kind {
-            ThreatKind::SybilCluster { affected_fps, shared_asn, .. } => {
+            ThreatKind::SybilCluster {
+                affected_fps,
+                shared_asn,
+                ..
+            } => {
                 for fp in affected_fps {
-                    if let Err(e) = self.store.update_relay(fp, evt.anomaly_score, *shared_asn, None) {
+                    if let Err(e) =
+                        self.store
+                            .update_relay(fp, evt.anomaly_score, *shared_asn, None)
+                    {
                         warn!(fp, "Failed to update relay reputation: {e}");
                     }
                     if let Err(e) = self.store.add_flag(fp, "sybil") {
@@ -66,9 +73,15 @@ impl MitigationEngine {
                     }
                 }
             }
-            ThreatKind::GuardDiscovery { suspicious_fingerprints, .. } => {
+            ThreatKind::GuardDiscovery {
+                suspicious_fingerprints,
+                ..
+            } => {
                 for fp in suspicious_fingerprints {
-                    if let Err(e) = self.store.update_relay(fp, evt.anomaly_score * 0.5, None, None) {
+                    if let Err(e) = self
+                        .store
+                        .update_relay(fp, evt.anomaly_score * 0.5, None, None)
+                    {
                         warn!(fp, "Failed to update relay reputation: {e}");
                     }
                     if let Err(e) = self.store.add_flag(fp, "guard_discovery") {
@@ -96,21 +109,26 @@ mod arti_engine {
 
     /// Mitigation engine with full arti/Tor-client integration.
     pub struct MitigationEngine<R: Runtime> {
-        config:     ShieldConfig,
-        rx:         broadcast::Receiver<ThreatEvent>,
-        store:      Arc<ReputationStore>,
+        config: ShieldConfig,
+        rx: broadcast::Receiver<ThreatEvent>,
+        store: Arc<ReputationStore>,
         tor_client: TorClient<R>,
     }
 
     impl<R: Runtime> MitigationEngine<R> {
         /// Create a new `MitigationEngine` subscribed to `rx`, holding `tor_client` for circuit rotation.
         pub fn new(
-            config:     ShieldConfig,
-            rx:         broadcast::Receiver<ThreatEvent>,
-            store:      Arc<ReputationStore>,
+            config: ShieldConfig,
+            rx: broadcast::Receiver<ThreatEvent>,
+            store: Arc<ReputationStore>,
             tor_client: TorClient<R>,
         ) -> Self {
-            Self { config, rx, store, tor_client }
+            Self {
+                config,
+                rx,
+                store,
+                tor_client,
+            }
         }
 
         /// Start the mitigation loop; runs until the event bus is closed.
@@ -118,7 +136,7 @@ mod arti_engine {
             info!("MitigationEngine started (arti-hooks mode)");
             loop {
                 match self.rx.recv().await {
-                    Ok(evt)  => self.handle(evt).await,
+                    Ok(evt) => self.handle(evt).await,
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         warn!(n, "MitigationEngine lagged");
                     }
@@ -134,8 +152,7 @@ mod arti_engine {
             // TorClient::isolated_client() is the stable public API.
             // It returns a new TorClient with a fresh IsolationToken — arti
             // will never share circuits between the original and the clone.
-            if cfg.auto_circuit_rotate
-                && evt.anomaly_score >= self.config.detectors.alert_threshold
+            if cfg.auto_circuit_rotate && evt.anomaly_score >= self.config.detectors.alert_threshold
             {
                 info!("Mitigation: circuit rotation via isolated_client()");
                 self.tor_client = self.tor_client.isolated_client();
@@ -146,10 +163,10 @@ mod arti_engine {
             // We log an alert; pinning a specific fingerprint via reconfigure()
             // would require writing a new TorClientConfig with [guard] settings.
             if cfg.guard_pin {
-                if matches!(evt.kind,
-                    ThreatKind::SybilCluster { .. }
-                    | ThreatKind::GuardDiscovery { .. })
-                {
+                if matches!(
+                    evt.kind,
+                    ThreatKind::SybilCluster { .. } | ThreatKind::GuardDiscovery { .. }
+                ) {
                     warn!(
                         score = evt.anomaly_score,
                         "Mitigation: guard-pin alert — verify guard fp in arti logs"
@@ -159,9 +176,16 @@ mod arti_engine {
 
             // ── Reputation updates ────────────────────────────────────────────
             match &evt.kind {
-                ThreatKind::SybilCluster { affected_fps, shared_asn, .. } => {
+                ThreatKind::SybilCluster {
+                    affected_fps,
+                    shared_asn,
+                    ..
+                } => {
                     for fp in affected_fps {
-                        if let Err(e) = self.store.update_relay(fp, evt.anomaly_score, *shared_asn, None) {
+                        if let Err(e) =
+                            self.store
+                                .update_relay(fp, evt.anomaly_score, *shared_asn, None)
+                        {
                             warn!(fp, "Failed to update relay reputation: {e}");
                         }
                         if let Err(e) = self.store.add_flag(fp, "sybil") {
@@ -169,9 +193,15 @@ mod arti_engine {
                         }
                     }
                 }
-                ThreatKind::GuardDiscovery { suspicious_fingerprints, .. } => {
+                ThreatKind::GuardDiscovery {
+                    suspicious_fingerprints,
+                    ..
+                } => {
                     for fp in suspicious_fingerprints {
-                        if let Err(e) = self.store.update_relay(fp, evt.anomaly_score * 0.5, None, None) {
+                        if let Err(e) =
+                            self.store
+                                .update_relay(fp, evt.anomaly_score * 0.5, None, None)
+                        {
                             warn!(fp, "Failed to update relay reputation: {e}");
                         }
                         if let Err(e) = self.store.add_flag(fp, "guard_discovery") {

@@ -131,15 +131,17 @@ pub fn spawn_worker() -> (OsintRequestSender, OsintResultReceiver) {
             rt.block_on(async move {
                 while let Ok(req) = req_rx.recv() {
                     match req {
-                        OsintRequest::Ip(ip) => {
-                            match run_ip_lookup(ip).await {
-                                Ok(r)  => { let _ = res_tx.send(OsintResult::Ip(r)); }
-                                Err(e) => warn!("OSINT IP lookup failed for {ip}: {e}"),
+                        OsintRequest::Ip(ip) => match run_ip_lookup(ip).await {
+                            Ok(r) => {
+                                let _ = res_tx.send(OsintResult::Ip(r));
                             }
-                        }
+                            Err(e) => warn!("OSINT IP lookup failed for {ip}: {e}"),
+                        },
                         OsintRequest::Relay { fingerprint } => {
                             match relay::lookup_relay(&fingerprint).await {
-                                Ok(r)  => { let _ = res_tx.send(OsintResult::Relay(r)); }
+                                Ok(r) => {
+                                    let _ = res_tx.send(OsintResult::Relay(r));
+                                }
                                 Err(e) => warn!("OSINT relay lookup failed for {fingerprint}: {e}"),
                             }
                         }
@@ -161,20 +163,20 @@ pub fn spawn_worker() -> (OsintRequestSender, OsintResultReceiver) {
 
 #[derive(Deserialize)]
 struct IpApiResponse {
-    status:      String,
-    country:     Option<String>,
+    status: String,
+    country: Option<String>,
     #[serde(rename = "countryCode")]
     country_code: Option<String>,
     #[serde(rename = "regionName")]
-    region:      Option<String>,
-    city:        Option<String>,
-    lat:         Option<f64>,
-    lon:         Option<f64>,
-    isp:         Option<String>,
+    region: Option<String>,
+    city: Option<String>,
+    lat: Option<f64>,
+    lon: Option<f64>,
+    isp: Option<String>,
     #[serde(rename = "as")]
-    asn:         Option<String>,
-    zip:         Option<String>,
-    timezone:    Option<String>,
+    asn: Option<String>,
+    zip: Option<String>,
+    timezone: Option<String>,
 }
 
 async fn lookup_ip_api(client: &reqwest::Client, ip: IpAddr) -> anyhow::Result<IpApiResponse> {
@@ -205,10 +207,10 @@ struct OverpassElement {
     #[serde(rename = "type")]
     #[allow(dead_code)]
     elem_type: String,
-    center:    Option<OverpassCenter>,
-    lat:       Option<f64>,
-    lon:       Option<f64>,
-    tags:      Option<std::collections::HashMap<String, String>>,
+    center: Option<OverpassCenter>,
+    lat: Option<f64>,
+    lon: Option<f64>,
+    tags: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Deserialize)]
@@ -270,15 +272,27 @@ out center tags;"#,
                 return None;
             };
 
-            let street  = tags.get("addr:street").cloned().unwrap_or_default();
-            let number  = tags.get("addr:housenumber").cloned().unwrap_or_default();
-            let city    = tags.get("addr:city").cloned().unwrap_or_default();
-            let address = format!("{street} {number}{}", if city.is_empty() { String::new() } else { format!(", {city}") }).trim().to_string();
+            let street = tags.get("addr:street").cloned().unwrap_or_default();
+            let number = tags.get("addr:housenumber").cloned().unwrap_or_default();
+            let city = tags.get("addr:city").cloned().unwrap_or_default();
+            let address = format!(
+                "{street} {number}{}",
+                if city.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {city}")
+                }
+            )
+            .trim()
+            .to_string();
 
             Some(BuildingInfo {
                 name: tags.get("name").cloned(),
                 address,
-                building_type: tags.get("building").cloned().unwrap_or_else(|| "address".into()),
+                building_type: tags
+                    .get("building")
+                    .cloned()
+                    .unwrap_or_else(|| "address".into()),
                 lat,
                 lon,
             })
@@ -296,18 +310,27 @@ pub fn lat_lon_to_tile(lat: f64, lon: f64, zoom: u8) -> (u32, u32) {
     let n = (1u32 << zoom) as f64;
     let x = ((lon + 180.0) / 360.0 * n) as u32;
     let lat_r = lat.to_radians();
-    let y = ((1.0 - (lat_r.tan() + 1.0 / lat_r.cos()).ln() / std::f64::consts::PI) / 2.0 * n) as u32;
+    let y =
+        ((1.0 - (lat_r.tan() + 1.0 / lat_r.cos()).ln() / std::f64::consts::PI) / 2.0 * n) as u32;
     (x, y)
 }
 
 /// Fetch the PNG bytes of one OSM standard tile.
-async fn fetch_tile(client: &reqwest::Client, lat: f64, lon: f64, zoom: u8) -> anyhow::Result<(Vec<u8>, String)> {
+async fn fetch_tile(
+    client: &reqwest::Client,
+    lat: f64,
+    lon: f64,
+    zoom: u8,
+) -> anyhow::Result<(Vec<u8>, String)> {
     let (x, y) = lat_lon_to_tile(lat, lon, zoom);
     let url = format!("https://tile.openstreetmap.org/{zoom}/{x}/{y}.png");
     debug!(%url, "OSINT: fetching OSM tile");
     let bytes = client
         .get(&url)
-        .header("User-Agent", "ArtiShield/0.2 (security research; contact: artishield)")
+        .header(
+            "User-Agent",
+            "ArtiShield/0.2 (security research; contact: artishield)",
+        )
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await?
@@ -334,10 +357,12 @@ async fn run_ip_lookup(ip: IpAddr) -> anyhow::Result<IpOsintResult> {
     let lon = geo.lon.unwrap_or(0.0);
 
     // Step 2: nearby buildings (zoom 17 ≈ 100 m radius makes sense)
-    let buildings = query_buildings(&client, lat, lon, 100).await.unwrap_or_else(|e| {
-        warn!("Overpass query failed: {e}");
-        vec![]
-    });
+    let buildings = query_buildings(&client, lat, lon, 100)
+        .await
+        .unwrap_or_else(|e| {
+            warn!("Overpass query failed: {e}");
+            vec![]
+        });
 
     // Step 3: OSM tile (zoom 17 ≈ street level)
     let (tile_png, tile_url) = fetch_tile(&client, lat, lon, 17).await.unwrap_or_else(|e| {
@@ -348,17 +373,21 @@ async fn run_ip_lookup(ip: IpAddr) -> anyhow::Result<IpOsintResult> {
     Ok(IpOsintResult {
         ip,
         country_code: geo.country_code.unwrap_or_default(),
-        country:      geo.country.unwrap_or_default(),
-        region:       geo.region.unwrap_or_default(),
-        city:         geo.city.unwrap_or_default(),
+        country: geo.country.unwrap_or_default(),
+        region: geo.region.unwrap_or_default(),
+        city: geo.city.unwrap_or_default(),
         lat,
         lon,
-        isp:          geo.isp.unwrap_or_default(),
-        asn:          geo.asn.unwrap_or_default(),
-        postal:       geo.zip.unwrap_or_default(),
-        timezone:     geo.timezone.unwrap_or_default(),
+        isp: geo.isp.unwrap_or_default(),
+        asn: geo.asn.unwrap_or_default(),
+        postal: geo.zip.unwrap_or_default(),
+        timezone: geo.timezone.unwrap_or_default(),
         buildings,
-        tile_png: if tile_png.is_empty() { None } else { Some(tile_png) },
+        tile_png: if tile_png.is_empty() {
+            None
+        } else {
+            Some(tile_png)
+        },
         tile_url,
     })
 }

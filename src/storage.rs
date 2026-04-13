@@ -40,7 +40,9 @@ impl ReputationStore {
         let conn = Connection::open(path)?;
         // WAL mode: concurrent reads don't block writes
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-        let s = Self { conn: Mutex::new(conn) };
+        let s = Self {
+            conn: Mutex::new(conn),
+        };
         s.migrate()?;
         info!(?path, "ReputationStore opened");
         Ok(s)
@@ -49,13 +51,16 @@ impl ReputationStore {
     /// Create an in-memory database (used in unit tests).
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        let s = Self { conn: Mutex::new(conn) };
+        let s = Self {
+            conn: Mutex::new(conn),
+        };
         s.migrate()?;
         Ok(s)
     }
 
     fn migrate(&self) -> Result<()> {
-        self.db().execute_batch(r#"
+        self.db().execute_batch(
+            r#"
             CREATE TABLE IF NOT EXISTS relay_reputation (
                 fingerprint   TEXT PRIMARY KEY,
                 score         REAL    NOT NULL DEFAULT 0.0,
@@ -83,7 +88,8 @@ impl ReputationStore {
                 reason     TEXT NOT NULL,
                 expires_at TEXT
             );
-        "#)?;
+        "#,
+        )?;
         debug!("Schema ready");
         Ok(())
     }
@@ -94,14 +100,17 @@ impl ReputationStore {
     /// `asn` is stored as i64 (SQLite INTEGER) — the u32 fits safely.
     pub fn update_relay(
         &self,
-        fp:      &str,
+        fp: &str,
         new_score: f64,
-        asn:     Option<u32>,
+        asn: Option<u32>,
         country: Option<&str>,
     ) -> Result<()> {
         // Fingerprints must be 1–40 ASCII hex characters.
         if fp.is_empty() || fp.len() > 40 || !fp.bytes().all(|b| b.is_ascii_hexdigit()) {
-            anyhow::bail!("invalid relay fingerprint: expected up to 40 hex chars, got {:?}", fp);
+            anyhow::bail!(
+                "invalid relay fingerprint: expected up to 40 hex chars, got {:?}",
+                fp
+            );
         }
         let conn = self.db();
         let old: Option<f64> = conn
@@ -113,7 +122,7 @@ impl ReputationStore {
             .ok();
         let blended = match old {
             Some(o) => 0.3 * new_score + 0.7 * o,
-            None    => new_score,
+            None => new_score,
         };
         // asn: cast u32 → i64 (SQLite has no u32 type)
         let asn_i64 = asn.map(|a| a as i64);
@@ -142,7 +151,7 @@ impl ReputationStore {
                 flag
             );
         }
-        let conn  = self.db();
+        let conn = self.db();
         // Read current flags, add only if not already present
         let current: Option<String> = conn
             .query_row(
@@ -207,13 +216,13 @@ impl ReputationStore {
         let result: Result<Vec<_>, _> = stmt
             .query_map(params![threshold], |r| {
                 Ok(RelayRecord {
-                    fingerprint:   r.get(0)?,
-                    score:         r.get(1)?,
+                    fingerprint: r.get(0)?,
+                    score: r.get(1)?,
                     seen_circuits: r.get(2)?,
-                    last_seen:     r.get(3)?,
-                    flags:         r.get(4)?,
-                    asn:           r.get(5)?,
-                    country:       r.get(6)?,
+                    last_seen: r.get(3)?,
+                    flags: r.get(4)?,
+                    asn: r.get(5)?,
+                    country: r.get(6)?,
                 })
             })?
             .collect();
@@ -256,10 +265,10 @@ impl ReputationStore {
         let result: Result<Vec<_>, _> = stmt
             .query_map(params![limit as i64], |r| {
                 Ok(StoredEvent {
-                    id:            r.get(0)?,
-                    timestamp:     r.get(1)?,
-                    level:         r.get(2)?,
-                    message:       r.get(3)?,
+                    id: r.get(0)?,
+                    timestamp: r.get(1)?,
+                    level: r.get(2)?,
+                    message: r.get(3)?,
                     anomaly_score: r.get(4)?,
                 })
             })?
@@ -270,12 +279,7 @@ impl ReputationStore {
     // ── IP blocklist ───────────────────────────────────────────────────────────
 
     /// Add `ip` to the blocklist with an optional expiry timestamp.
-    pub fn block_ip(
-        &self,
-        ip:      IpAddr,
-        reason:  &str,
-        expires: Option<DateTime<Utc>>,
-    ) -> Result<()> {
+    pub fn block_ip(&self, ip: IpAddr, reason: &str, expires: Option<DateTime<Utc>>) -> Result<()> {
         self.db().execute(
             "INSERT OR REPLACE INTO blocked_ips(ip,blocked_at,reason,expires_at) \
              VALUES(?1,?2,?3,?4)",
@@ -292,10 +296,9 @@ impl ReputationStore {
 
     /// Remove `ip` from the blocklist. No-op if not present.
     pub fn unblock_ip(&self, ip: &str) -> Result<()> {
-        let n = self.db().execute(
-            "DELETE FROM blocked_ips WHERE ip=?1",
-            params![ip],
-        )?;
+        let n = self
+            .db()
+            .execute("DELETE FROM blocked_ips WHERE ip=?1", params![ip])?;
         if n > 0 {
             info!(ip, "IP unblocked");
         }
@@ -353,32 +356,32 @@ impl ReputationStore {
 #[derive(Debug, Clone)]
 pub struct RelayRecord {
     /// Hex-encoded RSA fingerprint of the relay.
-    pub fingerprint:   String,
+    pub fingerprint: String,
     /// Current EMA reputation score `[0, 1]`.
-    pub score:         f64,
+    pub score: f64,
     /// Total number of circuits in which this relay has been observed.
     pub seen_circuits: i64,
     /// RFC 3339 timestamp of the most recent observation.
-    pub last_seen:     String,
+    pub last_seen: String,
     /// Comma-separated flag labels attached to this relay (e.g. `"sybil,guard_discovery"`).
-    pub flags:         String,
+    pub flags: String,
     /// Autonomous System Number, if resolved.
-    pub asn:           Option<i64>,
+    pub asn: Option<i64>,
     /// ISO 3166-1 alpha-2 country code, if resolved.
-    pub country:       Option<String>,
+    pub country: Option<String>,
 }
 
 /// A threat event row as returned from the `threat_events` table.
 #[derive(Debug, Clone)]
 pub struct StoredEvent {
     /// UUIDv4 string identifier.
-    pub id:            String,
+    pub id: String,
     /// RFC 3339 UTC timestamp.
-    pub timestamp:     String,
+    pub timestamp: String,
     /// Severity level string (e.g. `"HIGH"`).
-    pub level:         String,
+    pub level: String,
     /// Human-readable description of the threat.
-    pub message:       String,
+    pub message: String,
     /// Anomaly score `[0, 1]` at the time of detection.
     pub anomaly_score: f64,
 }
@@ -426,7 +429,7 @@ mod tests {
 
     #[test]
     fn expired_ip_not_counted() {
-        let s  = ReputationStore::in_memory().unwrap();
+        let s = ReputationStore::in_memory().unwrap();
         let ip: IpAddr = "9.9.9.9".parse().unwrap();
         let past = chrono::Utc::now() - chrono::Duration::hours(1);
         s.block_ip(ip, "test", Some(past)).unwrap();
@@ -446,7 +449,7 @@ mod tests {
     fn suspicious_filter() {
         let s = ReputationStore::in_memory().unwrap();
         s.update_relay("GOOD", 0.1, None, None).unwrap();
-        s.update_relay("BAD",  0.9, None, None).unwrap();
+        s.update_relay("BAD", 0.9, None, None).unwrap();
         let sus = s.suspicious_relays(0.5).unwrap();
         assert_eq!(sus.len(), 1);
         assert_eq!(sus[0].fingerprint, "BAD");
@@ -463,7 +466,7 @@ mod tests {
 
     #[test]
     fn events_pruning() {
-        let s   = ReputationStore::in_memory().unwrap();
+        let s = ReputationStore::in_memory().unwrap();
         let evts = s.recent_events(100).unwrap();
         assert!(evts.is_empty());
     }

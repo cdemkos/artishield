@@ -57,15 +57,13 @@ mod bevy_plugin {
     impl Plugin for ArtishieldPlugin {
         fn build(&self, app: &mut App) {
             // Register the embedded WGSL shader so PipelineCache can find it.
-            app.world
-                .resource_mut::<Assets<Shader>>()
-                .set_untracked(
-                    node::ARTISHIELD_SHADER_HANDLE,
-                    Shader::from_wgsl(
-                        include_str!("../assets/artishield/effect.wgsl"),
-                        "assets/artishield/effect.wgsl",
-                    ),
-                );
+            app.world.resource_mut::<Assets<Shader>>().set_untracked(
+                node::ARTISHIELD_SHADER_HANDLE,
+                Shader::from_wgsl(
+                    include_str!("../assets/artishield/effect.wgsl"),
+                    "assets/artishield/effect.wgsl",
+                ),
+            );
 
             // Insert settings into the main world (enabled + default intensity).
             app.insert_resource(ArtishieldSettings {

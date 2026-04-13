@@ -8,8 +8,15 @@ use crate::{
     detectors::EventTx,
     event::{ThreatEvent, ThreatKind, ThreatLevel},
 };
-use std::{collections::VecDeque, net::SocketAddr, time::{Duration, Instant}};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, time};
+use std::{
+    collections::VecDeque,
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    time,
+};
 use tokio_socks::tcp::Socks5Stream;
 use tracing::{debug, info, warn};
 
@@ -31,20 +38,27 @@ const PROBE_HOSTS: &[(&str, &[u8])] = &[
     ),
 ];
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
-const WINDOW:        usize = 60;
+const WINDOW: usize = 60;
 
 #[derive(Clone, Copy)]
-struct Sample { rtt_ms: f64, burst: f64 }
+struct Sample {
+    rtt_ms: f64,
+    burst: f64,
+}
 
 fn pearson(xs: &[f64], ys: &[f64]) -> f64 {
     let n = xs.len();
-    if n < 2 { return 0.0; }
+    if n < 2 {
+        return 0.0;
+    }
     let mx = xs.iter().sum::<f64>() / n as f64;
     let my = ys.iter().sum::<f64>() / n as f64;
-    let num: f64 = xs.iter().zip(ys).map(|(x, y)| (x-mx)*(y-my)).sum();
-    let dx: f64  = xs.iter().map(|x| (x-mx).powi(2)).sum::<f64>().sqrt();
-    let dy: f64  = ys.iter().map(|y| (y-my).powi(2)).sum::<f64>().sqrt();
-    if dx < 1e-9 || dy < 1e-9 { return 0.0; }
+    let num: f64 = xs.iter().zip(ys).map(|(x, y)| (x - mx) * (y - my)).sum();
+    let dx: f64 = xs.iter().map(|x| (x - mx).powi(2)).sum::<f64>().sqrt();
+    let dy: f64 = ys.iter().map(|y| (y - my).powi(2)).sum::<f64>().sqrt();
+    if dx < 1e-9 || dy < 1e-9 {
+        return 0.0;
+    }
     (num / (dx * dy)).clamp(-1.0, 1.0)
 }
 
@@ -54,16 +68,21 @@ fn deanon_prob(r_abs: f64) -> f64 {
 
 /// Detects timing-correlation attacks by measuring Pearson correlation between SOCKS5 RTTs and a burst signal.
 pub struct TimingDetector {
-    config:     ShieldConfig,
-    tx:         EventTx,
+    config: ShieldConfig,
+    tx: EventTx,
     socks_addr: SocketAddr,
-    window:     VecDeque<Sample>,
+    window: VecDeque<Sample>,
 }
 
 impl TimingDetector {
     /// Create a new `TimingDetector` that probes through the SOCKS5 proxy at `socks_addr`.
     pub fn new(config: ShieldConfig, tx: EventTx, socks_addr: SocketAddr) -> Self {
-        Self { config, tx, socks_addr, window: VecDeque::with_capacity(WINDOW + 1) }
+        Self {
+            config,
+            tx,
+            socks_addr,
+            window: VecDeque::with_capacity(WINDOW + 1),
+        }
     }
 
     async fn probe(&self, burst: f64) -> Option<Sample> {
@@ -72,43 +91,62 @@ impl TimingDetector {
             let start = Instant::now();
             let result = time::timeout(PROBE_TIMEOUT, async {
                 let mut s = Socks5Stream::connect(self.socks_addr, *host)
-                    .await.map_err(|e| debug!("SOCKS {host}: {e}"))?;
+                    .await
+                    .map_err(|e| debug!("SOCKS {host}: {e}"))?;
                 s.write_all(*req).await.map_err(|_| ())?;
                 s.flush().await.ok();
                 let mut buf = [0u8; 1];
                 s.read_exact(&mut buf).await.map_err(|_| ())?;
                 Ok::<_, ()>(())
-            }).await;
+            })
+            .await;
             if let Ok(Ok(())) = result {
-                return Some(Sample { rtt_ms: start.elapsed().as_secs_f64() * 1000.0, burst });
+                return Some(Sample {
+                    rtt_ms: start.elapsed().as_secs_f64() * 1000.0,
+                    burst,
+                });
             }
         }
         None
     }
 
     fn analyse(&self) -> Option<ThreatEvent> {
-        let min = (self.config.detectors.timing_window_secs * 2).min(WINDOW as u64/2) as usize;
-        if self.window.len() < min { return None; }
+        let min = (self.config.detectors.timing_window_secs * 2).min(WINDOW as u64 / 2) as usize;
+        if self.window.len() < min {
+            return None;
+        }
 
-        let rtts:   Vec<f64> = self.window.iter().map(|s| s.rtt_ms).collect();
+        let rtts: Vec<f64> = self.window.iter().map(|s| s.rtt_ms).collect();
         let bursts: Vec<f64> = self.window.iter().map(|s| s.burst).collect();
-        let r     = pearson(&rtts, &bursts);
-        let prob  = deanon_prob(r.abs());
+        let r = pearson(&rtts, &bursts);
+        let prob = deanon_prob(r.abs());
         let thresh = self.config.detectors.timing_correlation_threshold;
 
         if r.abs() >= thresh {
-            let level = if prob >= 0.85 { ThreatLevel::Critical }
-                        else if prob >= 0.65 { ThreatLevel::High }
-                        else { ThreatLevel::Medium };
-            warn!(pearson_r = format!("{r:.3}"), deanon_p = format!("{prob:.2}"),
-                  "Timing correlation detected");
+            let level = if prob >= 0.85 {
+                ThreatLevel::Critical
+            } else if prob >= 0.65 {
+                ThreatLevel::High
+            } else {
+                ThreatLevel::Medium
+            };
+            warn!(
+                pearson_r = format!("{r:.3}"),
+                deanon_p = format!("{prob:.2}"),
+                "Timing correlation detected"
+            );
             Some(ThreatEvent::new(
                 level,
                 ThreatKind::TimingCorrelation {
-                    pearson_r: r, sample_count: self.window.len(), deanon_probability: prob,
+                    pearson_r: r,
+                    sample_count: self.window.len(),
+                    deanon_probability: prob,
                 },
-                format!("Timing: r={r:.3} over {} probes — de-anon p={:.0}%",
-                        self.window.len(), prob*100.0),
+                format!(
+                    "Timing: r={r:.3} over {} probes — de-anon p={:.0}%",
+                    self.window.len(),
+                    prob * 100.0
+                ),
                 prob,
                 vec!["auto_circuit_rotate".into()],
             ))
@@ -119,7 +157,11 @@ impl TimingDetector {
     }
 
     fn burst_signal(tick: u64, period: u64) -> f64 {
-        if tick % period < period / 4 { 1.0 } else { 0.0 }
+        if tick % period < period / 4 {
+            1.0
+        } else {
+            0.0
+        }
     }
 
     /// Start the timing detector loop; runs indefinitely, emitting events onto `tx`.
@@ -135,11 +177,15 @@ impl TimingDetector {
             let burst = Self::burst_signal(tick, burst_period);
             if let Some(sample) = self.probe(burst).await {
                 debug!(rtt_ms = sample.rtt_ms, burst, "Probe ok");
-                if self.window.len() >= WINDOW { self.window.pop_front(); }
+                if self.window.len() >= WINDOW {
+                    self.window.pop_front();
+                }
                 self.window.push_back(sample);
             }
             if tick % 10 == 0 {
-                if let Some(evt) = self.analyse() { let _ = self.tx.send(evt); }
+                if let Some(evt) = self.analyse() {
+                    let _ = self.tx.send(evt);
+                }
             }
         }
     }

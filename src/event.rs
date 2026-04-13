@@ -24,8 +24,11 @@ pub enum ThreatLevel {
 impl std::fmt::Display for ThreatLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::Info => "INFO", Self::Low => "LOW", Self::Medium => "MEDIUM",
-            Self::High => "HIGH", Self::Critical => "CRITICAL",
+            Self::Info => "INFO",
+            Self::Low => "LOW",
+            Self::Medium => "MEDIUM",
+            Self::High => "HIGH",
+            Self::Critical => "CRITICAL",
         })
     }
 }
@@ -37,52 +40,52 @@ pub enum ThreatKind {
     /// A group of relays sharing a /24 subnet or ASN — Sybil attack indicator.
     SybilCluster {
         /// Shared Autonomous System Number, if identified.
-        shared_asn:    Option<u32>,
+        shared_asn: Option<u32>,
         /// Shared /24 IPv4 prefix, if identified.
         shared_prefix: Option<String>,
         /// Fingerprints of relays in the suspected cluster.
-        affected_fps:  Vec<String>,
+        affected_fps: Vec<String>,
     },
     /// Statistical timing correlation between probe RTTs and a burst signal.
     TimingCorrelation {
         /// Pearson correlation coefficient `[-1, 1]`.
-        pearson_r:          f64,
+        pearson_r: f64,
         /// Number of probe samples used.
-        sample_count:       usize,
+        sample_count: usize,
         /// Estimated probability of successful de-anonymisation.
         deanon_probability: f64,
     },
     /// Denial-of-service indicators: latency spikes or bursty SENDME delivery.
     DenialOfService {
         /// Estimated SENDME cell rate (cells per second).
-        sendme_rate:  u32,
+        sendme_rate: u32,
         /// Number of samples in the latency queue.
-        queue_depth:  usize,
+        queue_depth: usize,
         /// Fingerprint of the suspected source relay, if known.
         source_relay: Option<String>,
     },
     /// Unexpected guard-flag churn in a consensus — guard-discovery attack indicator.
     GuardDiscovery {
         /// Number of guard relays added or removed.
-        rotation_count:          u32,
+        rotation_count: u32,
         /// Observation window in seconds.
-        window_secs:             u64,
+        window_secs: u64,
         /// Fingerprints of newly added or suspicious guard relays.
         suspicious_fingerprints: Vec<String>,
     },
     /// Abnormal HSDir concentration or descriptor-fetch rate — enumeration indicator.
     HsEnumeration {
         /// Descriptor-fetch rate (fetches per `window_secs`).
-        intro_rate:        u32,
+        intro_rate: u32,
         /// Observation window in seconds.
-        window_secs:       u64,
+        window_secs: u64,
         /// IP address of the suspected scanner, if identified.
         suspected_scanner: Option<IpAddr>,
     },
     /// Composite anomaly score spike from multiple detectors firing simultaneously.
     AnomalySpike {
         /// Blended anomaly score `[0, 1]`.
-        score:                  f64,
+        score: f64,
         /// Names of the detectors that contributed to this spike.
         contributing_detectors: Vec<String>,
     },
@@ -91,7 +94,7 @@ pub enum ThreatKind {
         /// The endpoint URL that was probed.
         endpoint: String,
         /// Short reason string: `"timeout"` | `"bad_response"` | `"connect_failed"`.
-        reason:   String,
+        reason: String,
     },
 }
 
@@ -100,19 +103,19 @@ pub enum ThreatKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreatEvent {
     /// Unique identifier for this event (UUIDv4).
-    pub id:                    Uuid,
+    pub id: Uuid,
     /// UTC timestamp of detection.
-    pub timestamp:             DateTime<Utc>,
+    pub timestamp: DateTime<Utc>,
     /// Severity level.
-    pub level:                 ThreatLevel,
+    pub level: ThreatLevel,
     /// Detailed threat category and supporting evidence.
-    pub kind:                  ThreatKind,
+    pub kind: ThreatKind,
     /// Human-readable description of the threat.
-    pub message:               String,
+    pub message: String,
     /// Mitigation action keys (e.g. `"auto_circuit_rotate"`) suggested for this event.
     pub suggested_mitigations: Vec<String>,
     /// Blended anomaly score `[0, 1]` at the time of detection.
-    pub anomaly_score:         f64,
+    pub anomaly_score: f64,
 }
 
 impl ThreatEvent {
@@ -120,20 +123,20 @@ impl ThreatEvent {
     ///
     /// `score` is clamped to `[0.0, 1.0]`.
     pub fn new(
-        level:       ThreatLevel,
-        kind:        ThreatKind,
-        message:     impl Into<String>,
-        score:       f64,
+        level: ThreatLevel,
+        kind: ThreatKind,
+        message: impl Into<String>,
+        score: f64,
         mitigations: Vec<String>,
     ) -> Self {
         Self {
-            id:                    Uuid::new_v4(),
-            timestamp:             Utc::now(),
+            id: Uuid::new_v4(),
+            timestamp: Utc::now(),
             level,
             kind,
-            message:               message.into(),
+            message: message.into(),
             suggested_mitigations: mitigations,
-            anomaly_score:         score.clamp(0.0, 1.0),
+            anomaly_score: score.clamp(0.0, 1.0),
         }
     }
 }
@@ -142,19 +145,19 @@ impl ThreatEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MetricsSnapshot {
     /// UTC timestamp of this snapshot.
-    pub timestamp:          Option<DateTime<Utc>>,
+    pub timestamp: Option<DateTime<Utc>>,
     /// Number of active Tor circuits (0 when arti-hooks is disabled).
-    pub active_circuits:    u32,
+    pub active_circuits: u32,
     /// Exponentially smoothed anomaly score `[0, 1]`.
-    pub anomaly_score:      f64,
+    pub anomaly_score: f64,
     /// Number of currently active (non-expired) blocked IPs.
-    pub blocked_ips:        u32,
+    pub blocked_ips: u32,
     /// Estimated bandwidth in kilobits per second (0 when arti-hooks is disabled).
-    pub bandwidth_kbps:     f64,
+    pub bandwidth_kbps: f64,
     /// Number of threat events detected in the last 60 seconds.
     pub events_last_minute: u32,
     /// Fingerprint of the current guard relay, if available.
-    pub guard_fingerprint:  Option<String>,
+    pub guard_fingerprint: Option<String>,
     /// Severity level of the most recent event, if any.
-    pub threat_level:       Option<ThreatLevel>,
+    pub threat_level: Option<ThreatLevel>,
 }

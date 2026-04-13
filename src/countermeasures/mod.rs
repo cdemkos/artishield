@@ -45,7 +45,10 @@ pub fn exclude_nodes_snippet(relays: &[RelayProfile]) -> String {
          # arti.toml equivalent:\n\
          # [path_config]\n\
          # exclude_nodes = [{}]\n",
-        all.iter().map(|fp| format!("${fp}")).collect::<Vec<_>>().join(","),
+        all.iter()
+            .map(|fp| format!("${fp}"))
+            .collect::<Vec<_>>()
+            .join(","),
         all.iter()
             .map(|fp| format!("{{identity = \"{fp}\"}}"))
             .collect::<Vec<_>>()
@@ -69,14 +72,12 @@ pub fn iptables_drop_rule(relays: &[RelayProfile]) -> String {
     for r in relays {
         let Some(ip) = r.ip else { continue };
         // Extract port from or_address "ip:port" or "[ipv6]:port"
-        let port = r.or_address
+        let port = r
+            .or_address
             .rsplit_once(':')
             .and_then(|(_, p)| p.parse::<u16>().ok())
             .unwrap_or(9001);
-        lines.push(format!(
-            "# {} ({})",
-            r.nickname, r.fingerprint
-        ));
+        lines.push(format!("# {} ({})", r.nickname, r.fingerprint));
         lines.push(format!(
             "iptables -A OUTPUT -d {ip} -p tcp --dport {port} -j DROP"
         ));
@@ -102,13 +103,12 @@ pub fn nftables_drop_rule(relays: &[RelayProfile]) -> String {
     ];
     for r in relays {
         let Some(ip) = r.ip else { continue };
-        let port = r.or_address
+        let port = r
+            .or_address
             .rsplit_once(':')
             .and_then(|(_, p)| p.parse::<u16>().ok())
             .unwrap_or(9001);
-        lines.push(format!(
-            "    # {} ({})", r.nickname, r.fingerprint
-        ));
+        lines.push(format!("    # {} ({})", r.nickname, r.fingerprint));
         lines.push(format!(
             "    ip daddr {ip} tcp dport {port} drop comment \"ArtiShield\";"
         ));
@@ -156,19 +156,19 @@ pub fn bad_relay_report(relay: &RelayProfile, reason: &str, evidence: &str) -> S
          Detected by ArtiShield v0.2 — automated Tor threat monitor.\n\
          \n\
          Best regards",
-        nickname  = relay.nickname,
-        fp_short  = &relay.fingerprint[..8],
-        fp        = relay.fingerprint,
-        or_addr   = relay.or_address,
-        country   = relay.country,
-        geo_city  = relay.geo_city,
-        isp       = relay.geo_isp,
-        asn       = relay.asn,
-        flags     = relay.flags.join(", "),
+        nickname = relay.nickname,
+        fp_short = &relay.fingerprint[..8],
+        fp = relay.fingerprint,
+        or_addr = relay.or_address,
+        country = relay.country,
+        geo_city = relay.geo_city,
+        isp = relay.geo_isp,
+        asn = relay.asn,
+        flags = relay.flags.join(", "),
         first_seen = relay.first_seen,
-        reason    = reason,
-        evidence  = evidence,
-        family    = if relay.family_fingerprints.is_empty() {
+        reason = reason,
+        evidence = evidence,
+        family = if relay.family_fingerprints.is_empty() {
             "none declared".to_owned()
         } else {
             relay.family_fingerprints.join("\n")
@@ -193,16 +193,17 @@ pub fn abuseipdb_curl_cmd(relay: &RelayProfile, reason: &str) -> String {
            --data-urlencode 'ip={ip}' \\\n\
            --data-urlencode 'categories=14,19' \\\n\
            --data-urlencode 'comment=Tor malicious relay ({nickname}, {fp_short}): {reason}'\n",
-        nickname  = relay.nickname,
-        fp_short  = &relay.fingerprint[..8.min(relay.fingerprint.len())],
-        ip        = ip,
-        reason    = reason.replace('\n', " "),
+        nickname = relay.nickname,
+        fp_short = &relay.fingerprint[..8.min(relay.fingerprint.len())],
+        ip = ip,
+        reason = reason.replace('\n', " "),
     )
 }
 
 /// Generate a draft email to the ASN abuse contact (from RDAP).
 pub fn rdap_abuse_email_draft(relay: &RelayProfile, reason: &str) -> String {
-    let contact = relay.abuse_contact
+    let contact = relay
+        .abuse_contact
         .as_deref()
         .unwrap_or("(no abuse contact found — check https://search.arin.net)");
     format!(
@@ -225,13 +226,16 @@ pub fn rdap_abuse_email_draft(relay: &RelayProfile, reason: &str) -> String {
          \n\
          Regards,\n\
          ArtiShield automated abuse reporting",
-        contact  = contact,
-        asn      = relay.asn,
-        as_name  = relay.as_name,
-        ip       = relay.ip.map(|i| i.to_string()).unwrap_or_else(|| "(unknown)".into()),
-        fp       = relay.fingerprint,
+        contact = contact,
+        asn = relay.asn,
+        as_name = relay.as_name,
+        ip = relay
+            .ip
+            .map(|i| i.to_string())
+            .unwrap_or_else(|| "(unknown)".into()),
+        fp = relay.fingerprint,
         nickname = relay.nickname,
-        reason   = reason,
+        reason = reason,
     )
 }
 
@@ -257,11 +261,11 @@ pub struct CountermeasureSet {
 /// Generate the full [`CountermeasureSet`] for a single relay profile.
 pub fn generate(profile: &RelayProfile, reason: &str, evidence: &str) -> CountermeasureSet {
     CountermeasureSet {
-        exclude_nodes:    exclude_nodes_snippet(std::slice::from_ref(profile)),
-        iptables:         iptables_drop_rule(std::slice::from_ref(profile)),
-        nftables:         nftables_drop_rule(std::slice::from_ref(profile)),
-        bad_relay_email:  bad_relay_report(profile, reason, evidence),
-        abuseipdb_cmd:    abuseipdb_curl_cmd(profile, reason),
-        isp_abuse_email:  rdap_abuse_email_draft(profile, reason),
+        exclude_nodes: exclude_nodes_snippet(std::slice::from_ref(profile)),
+        iptables: iptables_drop_rule(std::slice::from_ref(profile)),
+        nftables: nftables_drop_rule(std::slice::from_ref(profile)),
+        bad_relay_email: bad_relay_report(profile, reason, evidence),
+        abuseipdb_cmd: abuseipdb_curl_cmd(profile, reason),
+        isp_abuse_email: rdap_abuse_email_draft(profile, reason),
     }
 }
