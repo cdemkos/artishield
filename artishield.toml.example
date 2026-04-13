@@ -9,9 +9,9 @@
 socks_addr = "127.0.0.1:9150"
 
 # ArtiShield's own REST + WebSocket dashboard.
-# For bare metal: restrict to loopback if not behind a reverse proxy.
-# For Docker:     keep 0.0.0.0:7878 (mapped to 127.0.0.1 in docker-compose).
-api_addr = "0.0.0.0:7878"
+# Loopback-only by default — safe for local installs.
+# For Docker behind a reverse proxy use 0.0.0.0:7878.
+api_addr = "127.0.0.1:7878"
 
 # SQLite database path.
 # Bare metal / local dev:  db_path = "artishield.db"
