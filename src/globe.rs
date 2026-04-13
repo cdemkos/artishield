@@ -17,6 +17,7 @@ use bevy::{
 use std::sync::{mpsc, Mutex};
 
 use crate::event::{ThreatEvent, ThreatKind, ThreatLevel};
+use crate::osint::{OsintRequest, OsintRequestSender};
 
 // ── Country centroid table ────────────────────────────────────────────────────
 // ISO-3166 alpha-2 → (lat°, lon°).  Used to place relay dots and arc endpoints.
@@ -111,15 +112,33 @@ pub struct RelayDot;
 /// Animated great-circle arc representing an attack trajectory.
 #[derive(Component)]
 pub struct AttackArc {
+    /// Start point on the globe surface (unit-sphere coords).
     pub start: Vec3,
+    /// End point on the globe surface (unit-sphere coords).
     pub end: Vec3,
     /// Apex of the quadratic Bézier (lifted above the globe surface).
     pub apex: Vec3,
     /// Animation progress `[0, 1]`.
     pub progress: f32,
+    /// Arc colour (threat-level tint).
     pub color: Color,
     /// Remaining lifetime in seconds.
     pub ttl: f32,
+    /// Relay fingerprints associated with the source of this arc (if known).
+    pub source_fingerprints: Vec<String>,
+    /// The originating threat event (cloned at spawn time).
+    pub threat_kind_label: String,
+}
+
+/// Currently selected arc endpoint — set by the click-picker system.
+#[derive(Resource, Default)]
+pub struct SelectedArc {
+    /// Fingerprints to look up (from the clicked arc).
+    pub fingerprints: Vec<String>,
+    /// World-space position of the clicked endpoint (for highlighting).
+    pub endpoint: Option<Vec3>,
+    /// Short label shown in the UI.
+    pub label: String,
 }
 
 // ── Plugin ────────────────────────────────────────────────────────────────────
@@ -129,13 +148,15 @@ pub struct GlobePlugin;
 
 impl Plugin for GlobePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_scene)
+        app.init_resource::<SelectedArc>()
+            .add_systems(Startup, setup_scene)
             .add_systems(
                 Update,
                 (
                     rotate_globe,
                     camera_orbit,
                     receive_globe_events,
+                    pick_arc_endpoint,
                     animate_arcs,
                     draw_arcs,
                     draw_graticule,
@@ -147,9 +168,10 @@ impl Plugin for GlobePlugin {
 // ── Startup ───────────────────────────────────────────────────────────────────
 
 fn setup_scene(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut commands: Commands<'_, '_>,
+    mut meshes: ResMut<'_, Assets<Mesh>>,
+    mut materials: ResMut<'_, Assets<StandardMaterial>>,
+    asset_server: Res<'_, AssetServer>,
 ) {
     // Camera
     commands.spawn(Camera3dBundle {
@@ -182,15 +204,22 @@ fn setup_scene(
         ..Default::default()
     });
 
-    // Globe sphere
+    // Earth texture — loaded from assets/textures/earth_daymap.jpg.
+    // Falls back to a flat ocean colour if the file is absent.
+    let earth_texture: Handle<Image> = asset_server.load("textures/earth_daymap.jpg");
+
+    // Globe sphere — 72×36 UV-sphere so texture pixels align with meridians
     commands.spawn((
         PbrBundle {
             mesh: meshes.add(shape::UVSphere { radius: 1.0, sectors: 72, stacks: 36 }.into()),
             material: materials.add(StandardMaterial {
+                base_color_texture: Some(earth_texture),
+                // Slight fall-back tint when the texture hasn't loaded yet
                 base_color: Color::rgb(0.04, 0.14, 0.32),
-                metallic: 0.05,
-                perceptual_roughness: 0.85,
-                emissive: Color::rgb(0.01, 0.02, 0.06),
+                metallic: 0.0,
+                perceptual_roughness: 0.9,
+                // Keep emissive very low — real texture carries its own colour
+                emissive: Color::rgb(0.005, 0.008, 0.015),
                 ..Default::default()
             }),
             ..Default::default()
@@ -215,7 +244,7 @@ fn setup_scene(
 
 // ── Per-frame systems ─────────────────────────────────────────────────────────
 
-fn rotate_globe(time: Res<Time>, mut q: Query<&mut Transform, With<Globe>>) {
+fn rotate_globe(time: Res<'_, Time>, mut q: Query<'_, '_, &mut Transform, With<Globe>>) {
     for mut t in q.iter_mut() {
         t.rotate_y(0.04 * time.delta_seconds());
     }
@@ -223,11 +252,11 @@ fn rotate_globe(time: Res<Time>, mut q: Query<&mut Transform, With<Globe>>) {
 
 /// Mouse-drag orbit + scroll zoom.
 fn camera_orbit(
-    time: Res<Time>,
-    mouse_input: Res<Input<MouseButton>>,
-    mut motion: EventReader<MouseMotion>,
-    mut scroll: EventReader<MouseWheel>,
-    mut q: Query<&mut Transform, With<Camera>>,
+    time: Res<'_, Time>,
+    mouse_input: Res<'_, Input<MouseButton>>,
+    mut motion: EventReader<'_, '_, MouseMotion>,
+    mut scroll: EventReader<'_, '_, MouseWheel>,
+    mut q: Query<'_, '_, &mut Transform, With<Camera>>,
 ) {
     let mut yaw = 0.0_f32;
     let mut pitch = 0.0_f32;
@@ -264,7 +293,7 @@ fn camera_orbit(
 }
 
 /// Draw latitude/longitude graticule using [`Gizmos`].
-fn draw_graticule(mut gizmos: Gizmos) {
+fn draw_graticule(mut gizmos: Gizmos<'_>) {
     let color = Color::rgba(0.15, 0.35, 0.65, 0.18);
     let r = 1.005_f32;
     const STEPS: usize = 64;
@@ -304,10 +333,11 @@ fn draw_graticule(mut gizmos: Gizmos) {
 // ── Event ingestion ───────────────────────────────────────────────────────────
 
 fn receive_globe_events(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    receiver: Option<Res<GlobeEventReceiver>>,
+    mut commands: Commands<'_, '_>,
+    mut meshes: ResMut<'_, Assets<Mesh>>,
+    mut materials: ResMut<'_, Assets<StandardMaterial>>,
+    receiver: Option<Res<'_, GlobeEventReceiver>>,
+    osint_tx: Option<Res<'_, OsintRequestSender>>,
 ) {
     let receiver = match receiver {
         Some(r) => r,
@@ -321,7 +351,26 @@ fn receive_globe_events(
 
     for _ in 0..16 {
         match rx.try_recv() {
-            Ok(GlobeMessage::Threat(evt)) => spawn_arc(&mut commands, &evt),
+            Ok(GlobeMessage::Threat(evt)) => {
+                // Trigger relay OSINT for any fingerprints in the event
+                if let Some(ref tx) = osint_tx {
+                    let fps: Vec<String> = match &evt.kind {
+                        ThreatKind::SybilCluster { affected_fps, .. }         => affected_fps.iter().take(3).cloned().collect(),
+                        ThreatKind::GuardDiscovery { suspicious_fingerprints, .. } => suspicious_fingerprints.iter().take(3).cloned().collect(),
+                        ThreatKind::DenialOfService { source_relay: Some(fp), .. } => vec![fp.clone()],
+                        ThreatKind::HsEnumeration { suspected_scanner: Some(ip), .. } => {
+                            // IP-level lookup as fallback (relay acting as scanner)
+                            let _ = tx.0.try_send(OsintRequest::Ip(*ip));
+                            vec![]
+                        }
+                        _ => vec![],
+                    };
+                    for fp in fps {
+                        let _ = tx.0.try_send(OsintRequest::Relay { fingerprint: fp });
+                    }
+                }
+                spawn_arc(&mut commands, &evt);
+            }
             Ok(GlobeMessage::RelayGeo { lat, lon, level, .. }) => {
                 spawn_relay_dot(&mut commands, &mut meshes, &mut materials, lat, lon, level);
             }
@@ -332,7 +381,7 @@ fn receive_globe_events(
 
 /// Spawn a small glowing sphere at a geo-coordinate to represent a known relay.
 fn spawn_relay_dot(
-    commands: &mut Commands,
+    commands: &mut Commands<'_, '_>,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     lat: f32,
@@ -359,7 +408,7 @@ fn spawn_relay_dot(
 }
 
 /// Spawn an [`AttackArc`] entity for the given event.
-fn spawn_arc(commands: &mut Commands, evt: &ThreatEvent) {
+fn spawn_arc(commands: &mut Commands<'_, '_>, evt: &ThreatEvent) {
     let color = level_color(evt.level, 1.0);
     let seed  = evt.timestamp.timestamp() as f32;
 
@@ -375,7 +424,29 @@ fn spawn_arc(commands: &mut Commands, evt: &ThreatEvent) {
         _                                         => 4.0,
     };
 
-    commands.spawn(AttackArc { start, end, apex, progress: 0.0, color, ttl });
+    // Extract relay fingerprints for click-based OSINT
+    let source_fingerprints: Vec<String> = match &evt.kind {
+        ThreatKind::SybilCluster { affected_fps, .. }              => affected_fps.iter().take(5).cloned().collect(),
+        ThreatKind::GuardDiscovery { suspicious_fingerprints, .. } => suspicious_fingerprints.iter().take(5).cloned().collect(),
+        ThreatKind::DenialOfService { source_relay: Some(fp), .. } => vec![fp.clone()],
+        _ => vec![],
+    };
+
+    let threat_kind_label = match &evt.kind {
+        ThreatKind::SybilCluster { .. }     => "Sybil Cluster",
+        ThreatKind::GuardDiscovery { .. }   => "Guard Discovery",
+        ThreatKind::DenialOfService { .. }  => "Denial of Service",
+        ThreatKind::HsEnumeration { .. }    => "HS Enumeration",
+        ThreatKind::TimingCorrelation { .. }=> "Timing Correlation",
+        ThreatKind::AnomalySpike { .. }     => "Anomaly Spike",
+        ThreatKind::CanaryFailure { .. }    => "Canary Failure",
+    }.to_owned();
+
+    commands.spawn(AttackArc {
+        start, end, apex, progress: 0.0, color, ttl,
+        source_fingerprints,
+        threat_kind_label,
+    });
 }
 
 /// Derive a globe-surface position from an event.
@@ -403,12 +474,67 @@ fn geo_pos_from_event(evt: &ThreatEvent, seed: f32, destination: bool) -> Vec3 {
     }
 }
 
+// ── Click picking ─────────────────────────────────────────────────────────────
+
+/// Raycast from camera through the mouse cursor; select the nearest arc endpoint.
+///
+/// A left-click within [`PICK_RADIUS`] world-units of any arc start/end triggers
+/// a relay OSINT lookup and highlights the endpoint.
+fn pick_arc_endpoint(
+    windows: Query<'_, '_, &bevy::window::Window, With<bevy::window::PrimaryWindow>>,
+    camera_q: Query<'_, '_, (&Camera, &GlobalTransform)>,
+    arc_q: Query<'_, '_, &AttackArc>,
+    mouse_btn: Res<'_, Input<MouseButton>>,
+    mut selected: ResMut<'_, SelectedArc>,
+    osint_tx: Option<Res<'_, OsintRequestSender>>,
+) {
+    if !mouse_btn.just_pressed(MouseButton::Left) { return; }
+
+    let Ok(window) = windows.get_single() else { return };
+    let Some(cursor) = window.cursor_position() else { return };
+    let Ok((cam, cam_t)) = camera_q.get_single() else { return };
+    let Some(ray) = cam.viewport_to_world(cam_t, cursor) else { return };
+
+    // Radius (in world units) within which a click registers on an endpoint
+    const PICK_RADIUS: f32 = 0.07;
+
+    let mut best_dist = PICK_RADIUS;
+    let mut best: Option<(&AttackArc, Vec3)> = None;
+
+    for arc in arc_q.iter() {
+        for &pt in &[arc.start, arc.end] {
+            // Distance from world point to infinite ray
+            let oc  = pt - ray.origin;
+            let proj = oc.dot(ray.direction).max(0.0);
+            let closest = ray.origin + ray.direction * proj;
+            let dist = (pt - closest).length();
+            if dist < best_dist {
+                best_dist = dist;
+                best = Some((arc, pt));
+            }
+        }
+    }
+
+    if let Some((arc, pt)) = best {
+        selected.fingerprints = arc.source_fingerprints.clone();
+        selected.endpoint     = Some(pt);
+        selected.label        = arc.threat_kind_label.clone();
+
+        // Fire relay OSINT for all fingerprints in this arc
+        if let Some(ref tx) = osint_tx {
+            for fp in &arc.source_fingerprints {
+                let _ = tx.0.try_send(OsintRequest::Relay { fingerprint: fp.clone() });
+            }
+        }
+    }
+}
+
 // ── Arc animation ─────────────────────────────────────────────────────────────
 
 fn animate_arcs(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut q: Query<(Entity, &mut AttackArc)>,
+    mut commands: Commands<'_, '_>,
+    time: Res<'_, Time>,
+    mut q: Query<'_, '_, (Entity, &mut AttackArc)>,
 ) {
     let dt = time.delta_seconds();
     for (entity, mut arc) in q.iter_mut() {
@@ -420,7 +546,7 @@ fn animate_arcs(
     }
 }
 
-fn draw_arcs(mut gizmos: Gizmos, q: Query<&AttackArc>) {
+fn draw_arcs(mut gizmos: Gizmos<'_>, q: Query<'_, '_, &AttackArc>, selected: Res<'_, SelectedArc>) {
     const STEPS: usize = 48;
 
     for arc in q.iter() {
@@ -442,6 +568,13 @@ fn draw_arcs(mut gizmos: Gizmos, q: Query<&AttackArc>) {
             let head = bezier(arc.start, arc.apex, arc.end, t);
             gizmos.sphere(head, Quat::IDENTITY, 0.012, color_with_alpha(arc.color, alpha * 0.9));
         }
+    }
+
+    // Highlight ring around the selected endpoint
+    if let Some(pt) = selected.endpoint {
+        let ring_color = Color::rgba(1.0, 1.0, 0.2, 0.9);
+        gizmos.sphere(pt, Quat::IDENTITY, 0.04, ring_color);
+        gizmos.sphere(pt, Quat::IDENTITY, 0.055, Color::rgba(1.0, 1.0, 0.2, 0.35));
     }
 }
 
@@ -586,11 +719,8 @@ pub fn run_native_app(config: crate::config::ShieldConfig, no_monitor: bool) -> 
     }
 
     // ── Bevy app setup ────────────────────────────────────────────────────────
-    use crate::node::{ArtishieldBindGroups, ArtishieldPipeline, ArtishieldSettings};
-    use bevy::render::{
-        extract_resource::ExtractResourcePlugin, render_graph::RenderGraph, Render, RenderApp,
-        RenderSet,
-    };
+    use crate::node::{ArtishieldPipeline, ArtishieldSettings};
+    use bevy::render::{extract_resource::ExtractResourcePlugin, RenderApp};
     use crate::node;
 
     let mut app = App::new();
@@ -606,6 +736,14 @@ pub fn run_native_app(config: crate::config::ShieldConfig, no_monitor: bool) -> 
 
     app.add_plugins(GlobePlugin);
     app.insert_resource(GlobeEventReceiver(Mutex::new(msg_rx)));
+
+    // OSINT worker thread + channel resources
+    let (osint_tx, osint_rx) = crate::osint::spawn_worker();
+    app.insert_resource(osint_tx);
+    app.insert_resource(osint_rx);
+
+    // egui UI panel (threat feed + OSINT detail)
+    crate::ui::setup_ui(&mut app);
 
     // Post-processing effect settings
     app.insert_resource(ArtishieldSettings {
@@ -627,15 +765,12 @@ pub fn run_native_app(config: crate::config::ShieldConfig, no_monitor: bool) -> 
         );
     }
 
-    // Wire render sub-app
+    // Wire render sub-app: only ArtishieldPipeline; bind groups are created
+    // on-the-fly inside ArtishieldPassNode::run() using post_process_write().
     {
         let render_app = app.sub_app_mut(RenderApp);
         render_app.init_resource::<ArtishieldPipeline>();
-        render_app.init_resource::<ArtishieldBindGroups>();
-        render_app.add_systems(Render, node::queue_node.in_set(RenderSet::Queue));
-
-        let mut graph = render_app.world.resource_mut::<RenderGraph>();
-        node::register_node(&mut graph);
+        node::register_node(&mut render_app.world);
     }
 
     app.add_plugins(ExtractResourcePlugin::<ArtishieldSettings>::default());

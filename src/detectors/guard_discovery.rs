@@ -41,6 +41,7 @@ impl GuardSnapshot {
 /// Detects guard-discovery attacks by monitoring guard-flag churn across consensus updates.
 #[cfg_attr(not(feature = "arti-hooks"), allow(dead_code))]
 pub struct GuardDiscoveryDetector {
+    #[allow(dead_code)]
     config:   ShieldConfig,
     tx:       EventTx,
     previous: Option<GuardSnapshot>,
@@ -113,6 +114,7 @@ impl GuardDiscoveryDetector {
         events
     }
 
+    /// Subscribe to consensus updates and emit guard-churn events until the stream closes.
     #[cfg(feature = "arti-hooks")]
     pub async fn run(mut self, dirmgr: std::sync::Arc<dyn tor_netdir::NetDirProvider>) {
         use futures::StreamExt as _;

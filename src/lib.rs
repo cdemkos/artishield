@@ -34,13 +34,12 @@ pub use bevy_plugin::ArtishieldPlugin;
 mod bevy_plugin {
     use bevy::prelude::*;
     use bevy::render::extract_resource::ExtractResourcePlugin;
-    use bevy::render::render_graph::RenderGraph;
     use bevy::render::render_resource::Shader;
-    use bevy::render::{Render, RenderApp, RenderSet};
+    use bevy::render::RenderApp;
 
     use super::node;
     // Re-export so callers can adjust settings without importing `node` directly.
-    pub use node::{ArtishieldBindGroups, ArtishieldSettings};
+    pub use node::ArtishieldSettings;
 
     /// Bevy [`Plugin`] that registers the ArtiShield fullscreen post-processing pass.
     ///
@@ -77,17 +76,25 @@ mod bevy_plugin {
             // Auto-extract ArtishieldSettings to the render world each frame.
             app.add_plugins(ExtractResourcePlugin::<ArtishieldSettings>::default());
 
-            // Render-app wiring
+            // Render-app wiring: only the pipeline resource; bind groups are now
+            // created on-the-fly inside ArtishieldPassNode::run().
             let render_app = app.sub_app_mut(RenderApp);
             render_app.init_resource::<node::ArtishieldPipeline>();
-            render_app.init_resource::<ArtishieldBindGroups>();
-            render_app.add_systems(Render, node::queue_node.in_set(RenderSet::Queue));
-
-            let mut graph = render_app.world.resource_mut::<RenderGraph>();
-            node::register_node(&mut graph);
+            node::register_node(&mut render_app.world);
         }
     }
 }
+
+// ── OSINT engine (Onionoo + ip-api + Overpass + OSM tiles) ───────────────────
+#[cfg(feature = "bevy-ui")]
+pub mod osint;
+
+// ── Forensic evidence &amp; report generation ──────────────────────────────────
+pub mod evidence;
+
+// ── Legal countermeasures (ExcludeNodes, iptables, reporting) ─────────────────
+#[cfg(feature = "bevy-ui")]
+pub mod countermeasures;
 
 // ── Bevy native globe app (opt-in) ────────────────────────────────────────────
 #[cfg(feature = "bevy-ui")]

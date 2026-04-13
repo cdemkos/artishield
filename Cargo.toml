@@ -1,6 +1,6 @@
 [package]
 name        = "artishield"
-version     = "0.2.0"
+version     = "0.2.1"
 edition     = "2021"
 description = "Threat monitor & mitigation for arti (Tor Rust client)"
 license     = "MIT OR Apache-2.0"
@@ -35,7 +35,6 @@ bevy-plugin = [
     "dep:bevy",
     "dep:lru",
     "dep:image",
-    "dep:reqwest",
 ]
 
 # Bevy egui UI panel (implies bevy-plugin)
@@ -68,6 +67,14 @@ maxminddb  = { version = "0.23", optional = true }
 
 tokio-socks = "0.5"
 
+# HTTP client — used by feed importer and abuse reporter
+reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
+
+# Feed signing: HMAC-SHA256
+sha2 = "0.10"
+hmac = "0.12"
+hex  = "0.4"
+
 rusqlite = { version = "0.37", features = ["bundled"] }
 
 axum       = { version = "0.7", features = ["ws"] }
@@ -90,6 +97,8 @@ bevy = { version = "0.11", default-features = false, features = [
     "bevy_text",
     "default_font",
     "tonemapping_luts",
+    "ktx2",
+    "zstd",
     "x11",
 ], optional = true }
 
@@ -100,8 +109,7 @@ bevy_egui = { version = "0.21", optional = true }
 lru   = { version = "0.8",  optional = true }
 image = { version = "0.24", optional = true }
 
-# HTTP client (optional, used in tile prototype)
-reqwest = { version = "0.11", features = ["json", "rustls-tls"], optional = true }
+# reqwest is now a regular dep (see above); no separate optional entry needed
 
 # ── Profile / build optimization ─────────────────────────────────────────────
 [dev-dependencies]

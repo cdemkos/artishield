@@ -61,6 +61,7 @@ pub async fn render(shared: &Arc<RwLock<SharedState>>, store: &Arc<ReputationSto
         "guard_discovery",
         "hs_enumeration",
         "anomaly_spike",
+        "canary_failure",
     ] {
         let count = state.recent_events.iter()
             .filter(|e| kind_label(&e.kind) == kind)
@@ -106,6 +107,7 @@ fn kind_label(kind: &ThreatKind) -> &'static str {
         ThreatKind::GuardDiscovery { .. }    => "guard_discovery",
         ThreatKind::HsEnumeration { .. }     => "hs_enumeration",
         ThreatKind::AnomalySpike { .. }      => "anomaly_spike",
+        ThreatKind::CanaryFailure { .. }     => "canary_failure",
     }
 }
 

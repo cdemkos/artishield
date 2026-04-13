@@ -86,6 +86,13 @@ pub enum ThreatKind {
         /// Names of the detectors that contributed to this spike.
         contributing_detectors: Vec<String>,
     },
+    /// Canary circuit probe failed — circuit integrity may be compromised.
+    CanaryFailure {
+        /// The endpoint URL that was probed.
+        endpoint: String,
+        /// Short reason string: `"timeout"` | `"bad_response"` | `"connect_failed"`.
+        reason:   String,
+    },
 }
 
 /// A single detected threat event emitted by a detector onto the event bus.

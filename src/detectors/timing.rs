@@ -13,8 +13,23 @@ use tokio::{io::{AsyncReadExt, AsyncWriteExt}, time};
 use tokio_socks::tcp::Socks5Stream;
 use tracing::{debug, info, warn};
 
-const PROBE_HOST:    &str  = "example.com:80";
-const PROBE_REQ:     &[u8] = b"GET / HTTP/1.0\r\nHost: example.com\r\nConnection: close\r\n\r\n";
+/// Fallback probe targets tried in order until one succeeds.
+/// All are well-known, reliably reachable hosts — using several avoids biasing
+/// RTT samples if a single site experiences congestion or temporary downtime.
+const PROBE_HOSTS: &[(&str, &[u8])] = &[
+    (
+        "check.torproject.org:80",
+        b"GET / HTTP/1.0\r\nHost: check.torproject.org\r\nConnection: close\r\n\r\n",
+    ),
+    (
+        "www.eff.org:80",
+        b"GET / HTTP/1.0\r\nHost: www.eff.org\r\nConnection: close\r\n\r\n",
+    ),
+    (
+        "example.com:80",
+        b"GET / HTTP/1.0\r\nHost: example.com\r\nConnection: close\r\n\r\n",
+    ),
+];
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 const WINDOW:        usize = 60;
 
@@ -52,20 +67,23 @@ impl TimingDetector {
     }
 
     async fn probe(&self, burst: f64) -> Option<Sample> {
-        let start = Instant::now();
-        let result = time::timeout(PROBE_TIMEOUT, async {
-            let mut s = Socks5Stream::connect(self.socks_addr, PROBE_HOST)
-                .await.map_err(|e| debug!("SOCKS: {e}"))?;
-            s.write_all(PROBE_REQ).await.map_err(|_| ())?;
-            s.flush().await.ok();
-            let mut buf = [0u8; 1];
-            s.read_exact(&mut buf).await.map_err(|_| ())?;
-            Ok::<_, ()>(())
-        }).await;
-        match result {
-            Ok(Ok(())) => Some(Sample { rtt_ms: start.elapsed().as_secs_f64()*1000.0, burst }),
-            _ => None,
+        // Try each fallback host in order; return the RTT of the first success.
+        for (host, req) in PROBE_HOSTS {
+            let start = Instant::now();
+            let result = time::timeout(PROBE_TIMEOUT, async {
+                let mut s = Socks5Stream::connect(self.socks_addr, *host)
+                    .await.map_err(|e| debug!("SOCKS {host}: {e}"))?;
+                s.write_all(*req).await.map_err(|_| ())?;
+                s.flush().await.ok();
+                let mut buf = [0u8; 1];
+                s.read_exact(&mut buf).await.map_err(|_| ())?;
+                Ok::<_, ()>(())
+            }).await;
+            if let Ok(Ok(())) = result {
+                return Some(Sample { rtt_ms: start.elapsed().as_secs_f64() * 1000.0, burst });
+            }
         }
+        None
     }
 
     fn analyse(&self) -> Option<ThreatEvent> {

@@ -35,7 +35,12 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{atomic::{AtomicUsize, Ordering}, Arc, Mutex as StdMutex},
+    time::Instant,
+};
 use tokio::sync::{broadcast, RwLock};
 use axum::http::Method;
 use tower_http::cors::{Any, CorsLayer};
@@ -45,18 +50,27 @@ use super::{metrics, SharedState};
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
+/// Maximum concurrent WebSocket connections accepted by this server.
+const MAX_WS_CONNECTIONS: usize = 50;
+/// Maximum write-endpoint (POST/DELETE) requests per IP per 60 s window.
+const WRITE_RATE_LIMIT: u32 = 60;
+
 /// Axum application state injected into every HTTP handler.
 #[derive(Clone)]
 pub struct ApiState {
     /// Shared runtime state (metrics, recent events, arti status).
-    pub shared:     Arc<RwLock<SharedState>>,
+    pub shared:          Arc<RwLock<SharedState>>,
     /// Reputation store for relay and IP data.
-    pub store:      Arc<ReputationStore>,
+    pub store:           Arc<ReputationStore>,
     /// Event bus sender — WebSocket clients subscribe to its receiver.
-    pub event_tx:   broadcast::Sender<ThreatEvent>,
+    pub event_tx:        broadcast::Sender<ThreatEvent>,
     /// Optional Bearer token required for write endpoints (POST/DELETE).
     /// `None` → restrict to loopback only.
-    pub api_token:  Option<String>,
+    pub api_token:       Option<String>,
+    /// Live WebSocket connection counter.
+    pub ws_connections:  Arc<AtomicUsize>,
+    /// Per-IP write-endpoint rate limiter: IP → (count, window_start).
+    pub write_limiter:   Arc<StdMutex<HashMap<std::net::IpAddr, (u32, Instant)>>>,
 }
 
 // ── Auth helper ───────────────────────────────────────────────────────────────
@@ -71,10 +85,63 @@ fn is_authorised(state: &ApiState, peer: &SocketAddr, headers: &HeaderMap) -> bo
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|t| t == token.as_str())
+            .map(|t| constant_time_eq(t.as_bytes(), token.as_bytes()))
             .unwrap_or(false),
         None => peer.ip().is_loopback(),
     }
+}
+
+/// Constant-time byte-slice equality to prevent timing-based token oracle attacks.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Returns `true` if the IP has not yet exceeded [`WRITE_RATE_LIMIT`] requests
+/// in the current 60-second window.  Advances the counter on each call.
+fn check_write_rate(
+    limiter: &StdMutex<HashMap<std::net::IpAddr, (u32, Instant)>>,
+    ip: std::net::IpAddr,
+) -> bool {
+    let mut map = limiter.lock().unwrap_or_else(|e| e.into_inner());
+    let now = Instant::now();
+    let entry = map.entry(ip).or_insert((0, now));
+    if now.duration_since(entry.1).as_secs() >= 60 {
+        *entry = (1, now);
+        true
+    } else if entry.0 < WRITE_RATE_LIMIT {
+        entry.0 += 1;
+        true
+    } else {
+        false
+    }
+}
+
+/// Axum middleware that injects security headers into every response.
+async fn security_headers(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut resp = next.run(req).await;
+    let h = resp.headers_mut();
+    h.insert("X-Frame-Options",
+        axum::http::HeaderValue::from_static("DENY"));
+    h.insert("X-Content-Type-Options",
+        axum::http::HeaderValue::from_static("nosniff"));
+    h.insert("Referrer-Policy",
+        axum::http::HeaderValue::from_static("no-referrer"));
+    h.insert("X-Permitted-Cross-Domain-Policies",
+        axum::http::HeaderValue::from_static("none"));
+    h.insert("Content-Security-Policy",
+        axum::http::HeaderValue::from_static(
+            "default-src 'self'; \
+             script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; \
+             connect-src 'self' ws: wss:; \
+             style-src 'unsafe-inline'"
+        ));
+    resp
 }
 
 // ── Router ────────────────────────────────────────────────────────────────────
@@ -99,6 +166,7 @@ pub async fn serve(state: ApiState, addr: SocketAddr) -> anyhow::Result<()> {
         .route("/metrics",               get(prometheus_metrics))
         .route("/ws",                    get(ws_handler))
         .layer(cors)
+        .layer(axum::middleware::from_fn(security_headers))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -195,10 +263,15 @@ async fn flag_relay(
                 "Unauthorized — set Authorization: Bearer <token> or use loopback")
             .into_response();
     }
-    if body.flag.is_empty() || body.flag.contains(',') || body.flag.contains(char::is_whitespace) {
+    if !check_write_rate(&s.write_limiter, peer.ip()) {
+        return (StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded").into_response();
+    }
+    if body.flag.is_empty() || body.flag.len() > 64
+        || body.flag.contains(',') || body.flag.contains(char::is_whitespace)
+    {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
-            "flag must be non-empty and contain no commas or whitespace",
+            "flag must be 1–64 characters with no commas or whitespace",
         ).into_response();
     }
     if !s.store.relay_exists(&fp) {
@@ -206,7 +279,10 @@ async fn flag_relay(
             .into_response();
     }
     match s.store.add_flag(&fp, &body.flag) {
-        Ok(_)  => (StatusCode::OK, "flagged").into_response(),
+        Ok(_)  => {
+            info!(peer = %peer, fp = %fp, flag = %body.flag, "Audit: relay flagged via API");
+            (StatusCode::OK, "flagged").into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -222,16 +298,27 @@ async fn unblock_ip(
                 "Unauthorized — set Authorization: Bearer <token> or use loopback")
             .into_response();
     }
+    if !check_write_rate(&s.write_limiter, peer.ip()) {
+        return (StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded").into_response();
+    }
     match s.store.unblock_ip(&ip) {
         Ok(_)  => {
-            info!(ip, "IP unblocked via API");
+            info!(peer = %peer, ip = %ip, "Audit: IP unblocked via API");
             (StatusCode::OK, format!("{ip} unblocked")).into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 
-async fn prometheus_metrics(State(s): State<ApiState>) -> Response {
+async fn prometheus_metrics(
+    State(s):          State<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers:           HeaderMap,
+) -> Response {
+    // Require Bearer auth if a token is configured (Prometheus scraper should send it).
+    if s.api_token.is_some() && !is_authorised(&s, &peer, &headers) {
+        return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+    }
     let body = metrics::render(&s.shared, &s.store).await;
     (
         StatusCode::OK,
@@ -241,11 +328,19 @@ async fn prometheus_metrics(State(s): State<ApiState>) -> Response {
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(s): State<ApiState>) -> Response {
-    ws.on_upgrade(move |socket| ws_loop(socket, s.event_tx.subscribe()))
+    if s.ws_connections.load(Ordering::Relaxed) >= MAX_WS_CONNECTIONS {
+        return (StatusCode::SERVICE_UNAVAILABLE, "Too many WebSocket connections").into_response();
+    }
+    ws.on_upgrade(move |socket| ws_loop(socket, s.event_tx.subscribe(), s.ws_connections))
 }
 
-async fn ws_loop(mut socket: WebSocket, mut rx: broadcast::Receiver<ThreatEvent>) {
-    info!("WS client connected");
+async fn ws_loop(
+    mut socket:  WebSocket,
+    mut rx:      broadcast::Receiver<ThreatEvent>,
+    counter:     Arc<AtomicUsize>,
+) {
+    let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+    info!(connections = n, "WS client connected");
     loop {
         tokio::select! {
             msg = rx.recv() => match msg {
@@ -265,6 +360,7 @@ async fn ws_loop(mut socket: WebSocket, mut rx: broadcast::Receiver<ThreatEvent>
             },
         }
     }
+    counter.fetch_sub(1, Ordering::Relaxed);
     debug!("WS client disconnected");
 }
 
@@ -766,6 +862,11 @@ function handleEvent(evt) {
   if (events.length > 200) events.pop();
   renderEvents();
   fireGlobeArc(evt);
+  // Relay-Tabelle sofort aktualisieren wenn ein Sybil- oder Guard-Discovery-Event ankommt
+  const kind = evt.kind || {};
+  if (kind.sybil_cluster || kind.guard_discovery) {
+    loadRelays();
+  }
 }
 
 function fireGlobeArc(evt) {

@@ -99,6 +99,10 @@ impl ReputationStore {
         asn:     Option<u32>,
         country: Option<&str>,
     ) -> Result<()> {
+        // Fingerprints must be 1–40 ASCII hex characters.
+        if fp.is_empty() || fp.len() > 40 || !fp.bytes().all(|b| b.is_ascii_hexdigit()) {
+            anyhow::bail!("invalid relay fingerprint: expected up to 40 hex chars, got {:?}", fp);
+        }
         let conn = self.db();
         let old: Option<f64> = conn
             .query_row(
@@ -167,15 +171,29 @@ impl ReputationStore {
 
     /// Return the current EMA reputation score for a relay fingerprint, or `0.0` if unknown.
     pub fn relay_score(&self, fp: &str) -> f64 {
-        self.conn
-            .lock()
-            .unwrap()
+        self.db()
             .query_row(
                 "SELECT score FROM relay_reputation WHERE fingerprint=?1",
                 params![fp],
                 |r| r.get(0),
             )
             .unwrap_or(0.0)
+    }
+
+    /// Multiply every relay score by `factor` (e.g. 0.9 for 10 % decay).
+    /// Removes rows that fall below `prune_below` after decay.
+    /// Returns the number of rows pruned.
+    pub fn decay_scores(&self, factor: f64, prune_below: f64) -> Result<usize> {
+        let conn = self.db();
+        conn.execute(
+            "UPDATE relay_reputation SET score = score * ?1",
+            params![factor],
+        )?;
+        let pruned = conn.execute(
+            "DELETE FROM relay_reputation WHERE score < ?1",
+            params![prune_below],
+        )?;
+        Ok(pruned)
     }
 
     /// Return all relays whose reputation score is at or above `threshold`, ordered by score descending.
@@ -286,9 +304,7 @@ impl ReputationStore {
 
     /// Return `true` if `ip` is currently blocked (ignoring expired entries).
     pub fn is_blocked(&self, ip: &IpAddr) -> bool {
-        self.conn
-            .lock()
-            .unwrap()
+        self.db()
             .query_row(
                 "SELECT COUNT(*) FROM blocked_ips WHERE ip=?1 \
                  AND (expires_at IS NULL OR expires_at > ?2)",
@@ -309,9 +325,7 @@ impl ReputationStore {
 
     /// Return the count of currently active (non-expired) blocked IPs.
     pub fn blocked_ip_count(&self) -> usize {
-        self.conn
-            .lock()
-            .unwrap()
+        self.db()
             .query_row(
                 "SELECT COUNT(*) FROM blocked_ips \
                  WHERE expires_at IS NULL OR expires_at > ?1",
@@ -323,9 +337,7 @@ impl ReputationStore {
 
     /// Return `true` if a relay with fingerprint `fp` exists in the reputation table.
     pub fn relay_exists(&self, fp: &str) -> bool {
-        self.conn
-            .lock()
-            .unwrap()
+        self.db()
             .query_row(
                 "SELECT 1 FROM relay_reputation WHERE fingerprint=?1",
                 params![fp],

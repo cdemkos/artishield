@@ -37,6 +37,7 @@ pub struct HsDirSnapshot {
 /// Detects hidden-service enumeration attacks via HSDir concentration and descriptor-fetch rates.
 #[cfg_attr(not(feature = "arti-hooks"), allow(dead_code))]
 pub struct HsEnumDetector {
+    #[allow(dead_code)]
     config:      ShieldConfig,
     tx:          EventTx,
     desc_window: VecDeque<Instant>,
@@ -117,6 +118,7 @@ impl HsEnumDetector {
         } else { None }
     }
 
+    /// Subscribe to consensus and descriptor events and emit HS-enumeration events until the stream closes.
     #[cfg(feature = "arti-hooks")]
     pub async fn run(mut self, dirmgr: std::sync::Arc<dyn tor_netdir::NetDirProvider>) {
         use futures::StreamExt as _;

@@ -10,10 +10,10 @@ use bevy::prelude::*;
 use bevy::reflect::TypeUuid;
 use bevy::render::extract_resource::ExtractResource;
 use bevy::render::render_graph::{
-    Node, NodeRunError, RenderGraph, RenderGraphContext, SlotInfo, SlotType,
+    Node, NodeRunError, RenderGraph, RenderGraphContext,
 };
 use bevy::render::render_resource::{
-    AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
+    AddressMode, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlendState,
     CachedPipelineState, CachedRenderPipelineId, ColorTargetState, ColorWrites, FilterMode,
     FragmentState, LoadOp, MultisampleState, Operations, PipelineCache, PrimitiveState,
@@ -24,7 +24,6 @@ use bevy::render::render_resource::{
 use bevy::render::renderer::{RenderContext, RenderDevice};
 use bevy::render::texture::BevyDefault as _;
 use bevy::render::view::{ExtractedView, ViewTarget};
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const NODE_NAME: &str = "artishield_pass";
@@ -46,26 +45,22 @@ pub struct ArtishieldSettings {
     pub intensity: f32,
 }
 
-// ── Render-world resources ────────────────────────────────────────────────────
-
-/// Per-view bind groups created each frame in the queue phase.
-#[derive(Resource, Default)]
-pub struct ArtishieldBindGroups {
-    pub map: HashMap<Entity, BindGroup>,
-}
+// ── Pipeline resource ─────────────────────────────────────────────────────────
 
 /// GPU resources for the ArtiShield render pass.
 ///
 /// Two pipeline variants are kept: one for LDR (swapchain format) cameras and
 /// one for HDR (`Rgba16Float`) cameras.  The correct variant is chosen per view
-/// in [`queue_node`] and [`ArtishieldPassNode::run`].
+/// in [`ArtishieldPassNode::run`].
 #[derive(Resource)]
 pub struct ArtishieldPipeline {
     /// LDR pipeline (`TextureFormat::bevy_default()`).
     pub pipeline_id: CachedRenderPipelineId,
     /// HDR pipeline (`TextureFormat::Rgba16Float`).
     pub hdr_pipeline_id: CachedRenderPipelineId,
+    /// Shared bind-group layout (sampler + texture view).
     pub bind_group_layout: BindGroupLayout,
+    /// Linear sampler used by both pipeline variants.
     pub sampler: Sampler,
 }
 
@@ -161,7 +156,6 @@ fn pipeline_desc(
             shader: shader.clone(),
             entry_point: "vs_main".into(),
             shader_defs: vec![],
-            // The WGSL vertex shader uses @builtin(vertex_index) — no vertex buffer.
             buffers: vec![],
         },
         fragment: Some(FragmentState {
@@ -181,117 +175,110 @@ fn pipeline_desc(
     }
 }
 
-// ── Render systems ────────────────────────────────────────────────────────────
-
-/// Queue phase: create one bind group per view, selecting LDR or HDR pipeline.
-pub fn queue_node(
-    render_device: Res<'_, RenderDevice>,
-    pipeline: Res<'_, ArtishieldPipeline>,
-    pipeline_cache: Res<'_, PipelineCache>,
-    view_targets: Query<'_, '_, (Entity, &ViewTarget, Option<&ExtractedView>)>,
-    mut bind_groups: ResMut<'_, ArtishieldBindGroups>,
-) {
-    bind_groups.map.clear();
-
-    for (entity, view_target, maybe_view) in view_targets.iter() {
-        let hdr = maybe_view.map_or(false, |v| v.hdr);
-        let pipeline_id = pipeline.pipeline_for(hdr);
-
-        // Skip until this pipeline variant has finished compiling.
-        if !matches!(
-            pipeline_cache.get_render_pipeline_state(pipeline_id),
-            CachedPipelineState::Ok(_)
-        ) {
-            continue;
-        }
-
-        let bind_group = render_device.create_bind_group(&BindGroupDescriptor {
-            label: Some("artishield_bind_group"),
-            layout: &pipeline.bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::Sampler(&pipeline.sampler),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: BindingResource::TextureView(view_target.main_texture_view()),
-                },
-            ],
-        });
-        bind_groups.map.insert(entity, bind_group);
-    }
-}
-
 // ── Pass node ─────────────────────────────────────────────────────────────────
 
 /// Records the fullscreen render pass for the ArtiShield effect.
-#[derive(Default)]
-pub struct ArtishieldPassNode;
+///
+/// Iterates over all views itself (no `view_entity` input slot) to avoid the
+/// crash that occurred when the node was placed in the main render graph where
+/// the slot is never connected.
+///
+/// Uses `ViewTarget::post_process_write()` so that source and destination are
+/// always different textures — reading and writing the same texture in one pass
+/// is a GPU validation error.
+pub struct ArtishieldPassNode {
+    query: QueryState<(Entity, &'static ViewTarget, Option<&'static ExtractedView>)>,
+}
+
+impl FromWorld for ArtishieldPassNode {
+    fn from_world(world: &mut World) -> Self {
+        Self { query: world.query() }
+    }
+}
 
 impl Node for ArtishieldPassNode {
-    fn input(&self) -> Vec<SlotInfo> {
-        vec![SlotInfo::new("view_entity", SlotType::Entity)]
+    // No input slots — we iterate views ourselves in `run`.
+    fn update(&mut self, world: &mut World) {
+        self.query.update_archetypes(world);
     }
-
-    fn update(&mut self, _world: &mut World) {}
 
     fn run(
         &self,
-        graph: &mut RenderGraphContext<'_>,
+        _graph: &mut RenderGraphContext<'_>,
         render_context: &mut RenderContext,
         world: &World,
     ) -> Result<(), NodeRunError> {
-        let view_entity = graph.get_input_entity("view_entity")?;
-
-        // Skip when disabled.
         let settings = world.resource::<ArtishieldSettings>();
         if !settings.enabled {
             return Ok(());
         }
 
-        let view_target = match world.get::<ViewTarget>(view_entity) {
-            Some(vt) => vt,
-            None => return Ok(()),
-        };
-
-        let bind_groups = world.resource::<ArtishieldBindGroups>();
-        let bind_group = match bind_groups.map.get(&view_entity) {
-            Some(bg) => bg,
-            None => return Ok(()), // pipeline still compiling or view not queued
-        };
-
+        let pipeline_res   = world.resource::<ArtishieldPipeline>();
         let pipeline_cache = world.resource::<PipelineCache>();
-        let pipeline_res = world.resource::<ArtishieldPipeline>();
-        let hdr = world.get::<ExtractedView>(view_entity).map_or(false, |v| v.hdr);
-        let pipeline_id = pipeline_res.pipeline_for(hdr);
-        let pipeline = match pipeline_cache.get_render_pipeline(pipeline_id) {
-            Some(p) => p,
-            None => return Ok(()),
-        };
+        let render_device  = world.resource::<RenderDevice>();
 
-        let color_attachment = RenderPassColorAttachment {
-            view: view_target.main_texture_view(),
-            resolve_target: None,
-            ops: Operations {
-                load: LoadOp::Load,
-                store: true,
-            },
-        };
+        for (entity, view_target, maybe_view) in self.query.iter_manual(world) {
+            let hdr = maybe_view.map_or(false, |v| v.hdr);
+            let pipeline_id = pipeline_res.pipeline_for(hdr);
 
-        let mut render_pass =
-            render_context
-                .command_encoder()
-                .begin_render_pass(&RenderPassDescriptor {
-                    label: Some("artishield_fullscreen_pass"),
-                    color_attachments: &[Some(color_attachment)],
-                    depth_stencil_attachment: None,
-                });
+            // Skip this view until the pipeline has finished compiling.
+            if !matches!(
+                pipeline_cache.get_render_pipeline_state(pipeline_id),
+                CachedPipelineState::Ok(_)
+            ) {
+                continue;
+            }
+            let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_id) else {
+                continue;
+            };
 
-        render_pass.set_pipeline(pipeline);
-        render_pass.set_bind_group(0, bind_group, &[]);
-        // 6 vertices → full-screen quad; no vertex buffer required.
-        render_pass.draw(0..6, 0..1);
+            // post_process_write() swaps the ping-pong buffers atomically and
+            // returns separate source (to sample) and destination (to draw to).
+            // This avoids the GPU validation error of sampling and writing the
+            // same texture in one render pass.
+            let post_process = view_target.post_process_write();
+
+            let bind_group = render_device.create_bind_group(&BindGroupDescriptor {
+                label: Some("artishield_bind_group"),
+                layout: &pipeline_res.bind_group_layout,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: BindingResource::Sampler(&pipeline_res.sampler),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: BindingResource::TextureView(post_process.source),
+                    },
+                ],
+            });
+
+            let color_attachment = RenderPassColorAttachment {
+                view: post_process.destination,
+                resolve_target: None,
+                ops: Operations {
+                    load:  LoadOp::Load,
+                    store: true,
+                },
+            };
+
+            let mut render_pass =
+                render_context
+                    .command_encoder()
+                    .begin_render_pass(&RenderPassDescriptor {
+                        label:                    Some("artishield_fullscreen_pass"),
+                        color_attachments:        &[Some(color_attachment)],
+                        depth_stencil_attachment: None,
+                    });
+
+            render_pass.set_pipeline(pipeline);
+            render_pass.set_bind_group(0, &bind_group, &[]);
+            // 6 vertices → full-screen quad; no vertex buffer needed.
+            render_pass.draw(0..6, 0..1);
+
+            // Suppress unused-variable warning when there is only one view.
+            let _ = entity;
+        }
 
         Ok(())
     }
@@ -299,15 +286,21 @@ impl Node for ArtishieldPassNode {
 
 // ── Graph registration ────────────────────────────────────────────────────────
 
-/// Register the ArtiShield pass node, after the main camera driver.
+/// Register the ArtiShield pass node into the render graph of `render_world`.
+///
+/// The node is placed after `CAMERA_DRIVER` so it runs once all per-view
+/// camera sub-graphs have finished rendering.
 ///
 /// Safe to call multiple times — subsequent calls are no-ops.
-pub fn register_node(graph: &mut RenderGraph) {
+pub fn register_node(render_world: &mut World) {
     static NODE_REGISTERED: AtomicBool = AtomicBool::new(false);
     if NODE_REGISTERED.swap(true, Ordering::SeqCst) {
         return;
     }
-    graph.add_node(NODE_NAME, ArtishieldPassNode::default());
+
+    let node = ArtishieldPassNode::from_world(render_world);
+    let mut graph = render_world.resource_mut::<RenderGraph>();
+    graph.add_node(NODE_NAME, node);
     graph.add_node_edge(bevy::render::main_graph::node::CAMERA_DRIVER, NODE_NAME);
     info!("Registered artishield_pass node into render graph");
 }

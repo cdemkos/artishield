@@ -22,7 +22,10 @@ use crate::detectors::{
     sybil::SybilDetector,
 };
 use anyhow::Result;
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{atomic::AtomicUsize, Arc},
+};
 use tokio::sync::{broadcast, RwLock};
 use tracing::info;
 #[cfg(feature = "arti-hooks")]
@@ -211,11 +214,38 @@ impl ArtiShield {
             });
         }
 
+        // ── Relay score decay (every 15 min, factor 0.85, prune below 0.05) ──
+        {
+            let s = store.clone();
+            tokio::spawn(async move {
+                let mut t = tokio::time::interval(std::time::Duration::from_secs(900));
+                loop {
+                    t.tick().await;
+                    match s.decay_scores(0.85, 0.05) {
+                        Ok(n) if n > 0 => info!(n, "pruned low-score relay entries after decay"),
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("relay score decay failed: {e}"),
+                    }
+                }
+            });
+        }
+
         // ── HTTP + WebSocket + Prometheus API ─────────────────────────────────
         // This is the last thing we do — it blocks until the process exits.
         let addr = self.config.api_addr;
         info!(%addr, "Dashboard listening — http://{addr}/");
-        api::serve(api::ApiState { shared, store, event_tx: tx, api_token: self.config.api_token.clone() }, addr).await?;
+        api::serve(
+            api::ApiState {
+                shared,
+                store,
+                event_tx:       tx,
+                api_token:      self.config.api_token.clone(),
+                ws_connections: Arc::new(AtomicUsize::new(0)),
+                write_limiter:  Arc::new(std::sync::Mutex::new(HashMap::new())),
+            },
+            addr,
+        )
+        .await?;
         Ok(())
     }
 }
@@ -242,6 +272,14 @@ fn update_reputation(store: &ReputationStore, evt: &ThreatEvent) {
                 if let Err(e) = store.add_flag(fp, "guard_discovery") {
                     tracing::warn!(fp, "Failed to add guard_discovery flag: {e}");
                 }
+            }
+        }
+        ThreatKind::DenialOfService { source_relay: Some(fp), .. } => {
+            if let Err(e) = store.update_relay(fp, evt.anomaly_score * 0.6, None, None) {
+                tracing::warn!(fp, "Failed to update relay reputation: {e}");
+            }
+            if let Err(e) = store.add_flag(fp, "dos") {
+                tracing::warn!(fp, "Failed to add dos flag: {e}");
             }
         }
         _ => {}

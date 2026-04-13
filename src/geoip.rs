@@ -1,18 +1,27 @@
+//! MaxMind GeoLite2 City + ASN lookup service.
+
 use maxminddb::Reader;
 use serde::Serialize;
 use std::net::IpAddr;
 use std::sync::Arc;
 
+/// Geographic and network metadata resolved for a single IP address.
 #[derive(Debug, Serialize, Clone, Default)]
 pub struct GeoInfo {
-    pub country: Option<String>,   // z. B. "CH", "DE"
-    pub city: Option<String>,      // z. B. "Zürich"
+    /// ISO 3166-1 alpha-2 country code (e.g. `"CH"`, `"DE"`).
+    pub country: Option<String>,
+    /// City name, preferring German then English locale.
+    pub city: Option<String>,
+    /// Autonomous System Number.
     pub asn: Option<u32>,
-    pub asn_name: Option<String>,  // z. B. "Contabo GmbH"
+    /// Human-readable ASN organisation name (e.g. `"Contabo GmbH"`).
+    pub asn_name: Option<String>,
 }
 
+/// Thread-safe shared handle to a [`GeoIpServiceInner`].
 pub type GeoIpService = Arc<GeoIpServiceInner>;
 
+/// Holds the two MaxMind database readers (City + ASN).
 #[derive(Debug)]
 pub struct GeoIpServiceInner {
     city_reader: Reader<Vec<u8>>,
@@ -20,6 +29,7 @@ pub struct GeoIpServiceInner {
 }
 
 impl GeoIpServiceInner {
+    /// Open the MaxMind GeoLite2-City and GeoLite2-ASN databases at the given paths.
     pub fn new(city_path: &str, asn_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             city_reader: Reader::open_readfile(city_path)?,
@@ -27,9 +37,10 @@ impl GeoIpServiceInner {
         })
     }
 
+    /// Look up geographic and ASN metadata for `ip`. Missing data fields are `None`.
     pub fn lookup(&self, ip: IpAddr) -> GeoInfo {
-        let city: Option<maxminddb::geoip2::City> = self.city_reader.lookup(ip).ok();
-        let asn: Option<maxminddb::geoip2::Asn> = self.asn_reader.lookup(ip).ok();
+        let city: Option<maxminddb::geoip2::City<'_>> = self.city_reader.lookup(ip).ok();
+        let asn: Option<maxminddb::geoip2::Asn<'_>> = self.asn_reader.lookup(ip).ok();
 
         GeoInfo {
             country: city.as_ref().and_then(|c| c.country.as_ref().and_then(|co| co.iso_code.map(|s| s.to_string()))),

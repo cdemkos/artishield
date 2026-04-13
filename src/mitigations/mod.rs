@@ -94,6 +94,7 @@ mod arti_engine {
     use arti_client::TorClient;
     use tor_rtcompat::Runtime;
 
+    /// Mitigation engine with full arti/Tor-client integration.
     pub struct MitigationEngine<R: Runtime> {
         config:     ShieldConfig,
         rx:         broadcast::Receiver<ThreatEvent>,
@@ -102,6 +103,7 @@ mod arti_engine {
     }
 
     impl<R: Runtime> MitigationEngine<R> {
+        /// Create a new `MitigationEngine` subscribed to `rx`, holding `tor_client` for circuit rotation.
         pub fn new(
             config:     ShieldConfig,
             rx:         broadcast::Receiver<ThreatEvent>,
@@ -111,6 +113,7 @@ mod arti_engine {
             Self { config, rx, store, tor_client }
         }
 
+        /// Start the mitigation loop; runs until the event bus is closed.
         pub async fn run(mut self) {
             info!("MitigationEngine started (arti-hooks mode)");
             loop {

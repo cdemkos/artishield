@@ -17,7 +17,7 @@ RUN mkdir -p src && echo 'fn main(){}' > src/main.rs && \
     echo 'pub fn dummy(){}' > src/lib.rs
 
 # Build deps only (cached layer)
-RUN cargo build --release --no-default-features 2>/dev/null || true
+RUN cargo build --release --no-default-features || true
 
 # Now copy real source
 COPY src/ src/

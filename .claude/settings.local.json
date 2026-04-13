@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo clippy:*)",
+      "Bash(cargo build:*)",
+      "Bash(wc:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo test:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(grep -c \"ok$\")",
+      "Bash(git:*)",
+      "Bash(curl -L --max-time 60 -o /home/ricpor/git/artishield/assets/textures/earth_daymap.jpg \"https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73776/world.topo.200412.3x2048x1024.jpg\")",
+      "Bash(curl:*)"
+    ]
+  }
+}

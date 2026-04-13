@@ -158,6 +158,7 @@ impl SybilDetector {
 
     // ── NetDir scan ───────────────────────────────────────────────────────────
 
+    /// Scan a full network directory for /24-subnet and ASN concentration events.
     #[cfg(feature = "arti-hooks")]
     pub fn analyse_netdir(&self, netdir: &tor_netdir::NetDir) -> Vec<ThreatEvent> {
         use tor_linkspec::HasAddrs as _;
@@ -215,6 +216,7 @@ impl SybilDetector {
 
     // ── Main task ─────────────────────────────────────────────────────────────
 
+    /// Subscribe to consensus updates and emit Sybil-cluster events until the stream closes.
     #[cfg(feature = "arti-hooks")]
     pub async fn run(self, dirmgr: std::sync::Arc<dyn tor_netdir::NetDirProvider>) {
         use futures::StreamExt as _;
