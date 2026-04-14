@@ -645,7 +645,7 @@ fn load_or_create_key(path: &Path) -> Result<Vec<u8>> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).context("create key directory")?;
     }
-    std::fs::write(path, &hex_key).context("write signing key")?;
+    std::fs::write(path, hex_key).context("write signing key")?;
 
     tracing::info!(?path, "Generated new evidence signing key");
     Ok(key)

@@ -1,7 +1,10 @@
 //! Configuration types and TOML loader for ArtiShield.
 
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, path::PathBuf};
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 
 /// Top-level ArtiShield configuration, loaded from a TOML file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,7 +67,7 @@ impl ShieldConfig {
     /// | `ARTISHIELD_API_TOKEN`      | `api_token`                     |
     /// | `ARTISHIELD_ABUSEIPDB_KEY`  | `mitigations.abuseipdb_key`     |
     /// | `ARTISHIELD_HMAC_KEY`       | `feed.hmac_key`                 |
-    pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
+    pub fn load(path: &Path) -> anyhow::Result<Self> {
         let mut cfg = if path.exists() {
             toml::from_str::<Self>(&std::fs::read_to_string(path)?)?
         } else {
