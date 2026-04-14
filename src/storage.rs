@@ -440,19 +440,19 @@ mod tests {
     #[test]
     fn relay_exists_returns_correct() {
         let s = ReputationStore::in_memory().unwrap();
-        assert!(!s.relay_exists("UNKNOWN"));
-        s.update_relay("KNOWN", 0.5, None, None).unwrap();
-        assert!(s.relay_exists("KNOWN"));
+        assert!(!s.relay_exists("aabbccdd"));
+        s.update_relay("aabbccdd", 0.5, None, None).unwrap();
+        assert!(s.relay_exists("aabbccdd"));
     }
 
     #[test]
     fn suspicious_filter() {
         let s = ReputationStore::in_memory().unwrap();
-        s.update_relay("GOOD", 0.1, None, None).unwrap();
-        s.update_relay("BAD", 0.9, None, None).unwrap();
+        s.update_relay("00000001", 0.1, None, None).unwrap();
+        s.update_relay("00000002", 0.9, None, None).unwrap();
         let sus = s.suspicious_relays(0.5).unwrap();
         assert_eq!(sus.len(), 1);
-        assert_eq!(sus[0].fingerprint, "BAD");
+        assert_eq!(sus[0].fingerprint, "00000002");
     }
 
     #[test]
