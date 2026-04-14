@@ -93,7 +93,7 @@ impl TimingDetector {
                 let mut s = Socks5Stream::connect(self.socks_addr, *host)
                     .await
                     .map_err(|e| debug!("SOCKS {host}: {e}"))?;
-                s.write_all(*req).await.map_err(|_| ())?;
+                s.write_all(req).await.map_err(|_| ())?;
                 s.flush().await.ok();
                 let mut buf = [0u8; 1];
                 s.read_exact(&mut buf).await.map_err(|_| ())?;
@@ -182,7 +182,7 @@ impl TimingDetector {
                 }
                 self.window.push_back(sample);
             }
-            if tick % 10 == 0 {
+            if tick.is_multiple_of(10) {
                 if let Some(evt) = self.analyse() {
                     let _ = self.tx.send(evt);
                 }
