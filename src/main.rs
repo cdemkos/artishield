@@ -3,7 +3,7 @@
 use artishield::{monitor::ArtiShield, ShieldConfig};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 #[command(name = "artishield", version, about = "Threat monitor for arti")]
@@ -60,14 +60,14 @@ async fn main() -> anyhow::Result<()> {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
 
     if cli.json_logs {
-        tracing_subscriber::registry()
-            .with(fmt::layer().json())
-            .with(log_filter)
+        tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(log_filter)
             .init();
     } else {
-        tracing_subscriber::registry()
-            .with(fmt::layer().compact())
-            .with(log_filter)
+        tracing_subscriber::fmt()
+            .compact()
+            .with_env_filter(log_filter)
             .init();
     }
 
