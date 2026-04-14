@@ -9,17 +9,17 @@ use std::net::IpAddr;
 #[test]
 fn ema_blends_correctly() {
     let s = ReputationStore::in_memory().unwrap();
-    s.update_relay("A", 0.9, None, None).unwrap();
-    s.update_relay("A", 0.0, None, None).unwrap();
-    let score = s.relay_score("A");
+    s.update_relay("aa", 0.9, None, None).unwrap();
+    s.update_relay("aa", 0.0, None, None).unwrap();
+    let score = s.relay_score("aa");
     assert!((score - 0.63).abs() < 0.02, "EMA={score}");
 }
 
 #[test]
 fn first_update_no_blend() {
     let s = ReputationStore::in_memory().unwrap();
-    s.update_relay("NEW", 0.5, None, None).unwrap();
-    assert!((s.relay_score("NEW") - 0.5).abs() < 0.001);
+    s.update_relay("bb", 0.5, None, None).unwrap();
+    assert!((s.relay_score("bb") - 0.5).abs() < 0.001);
 }
 
 // ── Flags ─────────────────────────────────────────────────────────────────────
@@ -27,8 +27,8 @@ fn first_update_no_blend() {
 #[test]
 fn flag_added() {
     let s = ReputationStore::in_memory().unwrap();
-    s.update_relay("B", 0.9, None, None).unwrap();
-    s.add_flag("B", "sybil").unwrap();
+    s.update_relay("cc", 0.9, None, None).unwrap();
+    s.add_flag("cc", "sybil").unwrap();
     let relays = s.suspicious_relays(0.0).unwrap();
     assert!(relays[0].flags.contains("sybil"));
 }
@@ -36,10 +36,10 @@ fn flag_added() {
 #[test]
 fn flag_no_duplicate() {
     let s = ReputationStore::in_memory().unwrap();
-    s.update_relay("C", 0.9, None, None).unwrap();
-    s.add_flag("C", "sybil").unwrap();
-    s.add_flag("C", "sybil").unwrap();
-    s.add_flag("C", "guard_inj").unwrap();
+    s.update_relay("dd", 0.9, None, None).unwrap();
+    s.add_flag("dd", "sybil").unwrap();
+    s.add_flag("dd", "sybil").unwrap();
+    s.add_flag("dd", "guard_inj").unwrap();
     let relays = s.suspicious_relays(0.0).unwrap();
     let flags = &relays[0].flags;
     assert_eq!(
@@ -55,11 +55,11 @@ fn flag_no_duplicate() {
 #[test]
 fn suspicious_threshold() {
     let s = ReputationStore::in_memory().unwrap();
-    s.update_relay("GOOD", 0.1, None, None).unwrap();
-    s.update_relay("BAD", 0.9, None, None).unwrap();
+    s.update_relay("00000001", 0.1, None, None).unwrap();
+    s.update_relay("00000002", 0.9, None, None).unwrap();
     let sus = s.suspicious_relays(0.5).unwrap();
     assert_eq!(sus.len(), 1);
-    assert_eq!(sus[0].fingerprint, "BAD");
+    assert_eq!(sus[0].fingerprint, "00000002");
 }
 
 // ── ASN storage ───────────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ fn suspicious_threshold() {
 fn asn_stored_as_i64() {
     let s = ReputationStore::in_memory().unwrap();
     // u32::MAX fits in i64
-    s.update_relay("D", 0.5, Some(4_294_967_295u32), Some("DE"))
+    s.update_relay("ee", 0.5, Some(4_294_967_295u32), Some("DE"))
         .unwrap();
     let relays = s.suspicious_relays(0.0).unwrap();
     assert_eq!(relays[0].asn, Some(4_294_967_295i64));
