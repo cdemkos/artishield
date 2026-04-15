@@ -1,0 +1,36 @@
+# Version control
+.git
+.gitignore
+
+# CI / editor artefacts
+.github
+.vscode
+.idea
+*.swp
+*.swo
+
+# Build output (rebuilt inside Docker)
+target/
+
+# Local config & secrets
+.env
+artishield.toml
+artishield.db
+evidence.db
+evidence.key
+GeoLite2-ASN.mmdb
+
+# Documentation
+*.md
+LICENSE-*
+INSTALL.md
+CHANGELOG.md
+CONTRIBUTING.md
+
+# Test files
+tests/
+
+# Trunk / WASM tooling
+Trunk.toml
+static/
+assets/

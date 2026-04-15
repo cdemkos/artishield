@@ -1,0 +1,21 @@
+# Build artefacts
+/target/
+
+# Local config & secrets — never commit these
+.env
+artishield.toml
+artishield.db
+evidence.db
+evidence.key
+GeoLite2-ASN.mmdb
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Cargo
+Cargo.lock.bak

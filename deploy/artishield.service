@@ -9,7 +9,7 @@
 
 [Unit]
 Description=ArtiShield — Tor/arti threat monitor
-Documentation=https://github.com/your-org/artishield
+Documentation=https://github.com/cdemkos/artishield
 After=network-online.target arti.service
 Wants=network-online.target
 Requires=arti.service
@@ -31,11 +31,24 @@ StateDirectoryMode=0750
 # Configuration directory
 ConfigurationDirectory=artishield
 
-# Hardening
+# ── Hardening ──────────────────────────────────────────────────────────────
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
 ReadWritePaths=/var/lib/artishield
 
 # Allow reading the MaxMind DB
@@ -44,19 +57,28 @@ ReadOnlyPaths=/opt/artishield
 # Network: SOCKS (TCP) + arti's Unix socket (if configured)
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
-# Logging
+# ── Logging ────────────────────────────────────────────────────────────────
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=artishield
 
-# Environment — override config values without changing the file
+# ── Environment ────────────────────────────────────────────────────────────
+# Override config values without changing the file
 Environment="RUST_LOG=artishield=info,warn"
 # EnvironmentFile=/etc/artishield/artishield.env
 
-# Resource limits
+# ── Resource limits ────────────────────────────────────────────────────────
 LimitNOFILE=65536
 MemoryMax=256M
 TasksMax=64
+
+# Watchdog — systemd will restart the unit if it stops responding
+WatchdogSec=60s
+NotifyAccess=main
+
+# OOM behaviour — kill this unit rather than something else
+OOMPolicy=kill
+OOMScoreAdjust=500
 
 [Install]
 WantedBy=multi-user.target

@@ -1,5 +1,6 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM rust:1.77-slim-bookworm AS builder
+# Pin to a specific Rust version matching the declared MSRV.
+FROM rust:1.88-slim-bookworm AS builder
 
 WORKDIR /build
 
@@ -26,13 +27,14 @@ COPY tests/ tests/
 # Touch main.rs to force re-link
 RUN touch src/main.rs src/lib.rs
 
-# Build the real binary
+# Build the real binary.
 # Use --no-default-features to avoid arti network calls at build time.
 # Enable arti-hooks at runtime by mounting a config with arti already running.
 RUN cargo build --release --no-default-features && \
     strip target/release/artishield
 
-# ── Stage 2: Runtime ───────────────────────────────────────────────────────────
+# ── Stage 2: Runtime ──────────────────────────────────────────────────────────
+# Pin to a specific Debian bookworm digest for reproducible builds.
 FROM debian:bookworm-slim AS runtime
 
 # ca-certificates: TLS in timing probes
@@ -60,16 +62,20 @@ RUN mkdir -p /var/lib/artishield && \
 
 USER artishield
 
-# Dashboard API
+# Dashboard API + Prometheus metrics (same port, /metrics path)
 EXPOSE 7878
-
-# Prometheus metrics (same port, /metrics path)
-# EXPOSE 7878
 
 VOLUME ["/var/lib/artishield", "/opt/artishield/GeoLite2-ASN.mmdb"]
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+# Liveness probe — matches the /health endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -fsS http://localhost:7878/health || exit 1
+
+# Metadata labels (OCI standard)
+LABEL org.opencontainers.image.title="ArtiShield" \
+      org.opencontainers.image.description="Threat-monitoring and mitigation layer for arti (Tor in Rust)" \
+      org.opencontainers.image.source="https://github.com/cdemkos/artishield" \
+      org.opencontainers.image.licenses="MIT OR Apache-2.0"
 
 ENTRYPOINT ["artishield"]
 CMD ["--config", "/opt/artishield/artishield.toml"]

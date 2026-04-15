@@ -6,9 +6,14 @@ on:
   pull_request:
     branches: ["main"]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
 
 jobs:
   # ── Default features (geoip, no bevy, no arti) ────────────────────────────
@@ -18,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust (MSRV)
+      - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -32,6 +37,8 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-default-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-default-
 
       - name: cargo check
         run: cargo check --all-targets
@@ -42,7 +49,7 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
-  # ── No-default-features (minimal, no geoip) ────────────────────────────────
+  # ── No-default-features (minimal, no geoip) ───────────────────────────────
   check-minimal:
     name: check (no-default-features)
     runs-on: ubuntu-latest
@@ -58,6 +65,8 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-minimal-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-minimal-
       - run: cargo check --no-default-features
 
   # ── bevy-plugin only (render node, no window) ─────────────────────────────
@@ -69,7 +78,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-      - name: Install X11/audio dev libs (needed by bevy_winit in bevy-plugin)
+      - name: Install X11/audio dev libs
         run: |
           sudo apt-get update -q
           sudo apt-get install -y --no-install-recommends \
@@ -82,9 +91,11 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-bevy-plugin-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bevy-plugin-
       - run: cargo check --features bevy-plugin
 
-  # ── bevy-ui (full native app — compile-check only, no display needed) ─────
+  # ── bevy-ui (full native app — compile-check only) ────────────────────────
   check-bevy-ui:
     name: check (bevy-ui)
     runs-on: ubuntu-latest
@@ -106,6 +117,8 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-bevy-ui-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bevy-ui-
       - run: cargo check --features bevy-ui
 
   # ── Format ────────────────────────────────────────────────────────────────
@@ -119,3 +132,60 @@ jobs:
           toolchain: stable
           components: rustfmt
       - run: cargo fmt --check
+
+  # ── Security audit ────────────────────────────────────────────────────────
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  # ── MSRV check ────────────────────────────────────────────────────────────
+  msrv:
+    name: MSRV (rust-version from Cargo.toml)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read MSRV from Cargo.toml
+        id: msrv
+        run: |
+          MSRV=$(grep '^rust-version' Cargo.toml | head -1 | sed 's/.*= *"//;s/"//')
+          echo "version=$MSRV" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-msrv-
+      - run: cargo check --all-targets
+
+  # ── Docker build smoke-test ────────────────────────────────────────────────
+  docker:
+    name: docker build
+    runs-on: ubuntu-latest
+    needs: [check-default]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          tags: artishield:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
